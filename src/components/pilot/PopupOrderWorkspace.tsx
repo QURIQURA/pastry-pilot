@@ -28,6 +28,8 @@ import { ProductSelect } from "./ProductSelect";
 import { OrderMoodboardSection } from "./OrderMoodboardSection";
 import { OrderResultPhotosSection } from "./OrderResultPhotosSection";
 import { Field, SectionCard, buttonClass, inputClass, primaryButtonClass, selectClass } from "./ui";
+import { AutosaveStatus } from "./AutosaveStatus";
+import { useAutosave } from "@/hooks/use-autosave";
 
 const inputTime = (iso: string | null) =>
   iso ? `${toLocalDateString(new Date(iso))}T${formatTime(iso)}` : "";
@@ -103,6 +105,7 @@ export function PopupOrderWorkspace({ order }: { order: OrderListRow }) {
         order_number: string;
       };
       return {
+        sent: JSON.stringify(draft),
         state: {
           ...saved,
           orderNumber: result.order_number,
@@ -112,9 +115,10 @@ export function PopupOrderWorkspace({ order }: { order: OrderListRow }) {
         updatedAt: result.updated_at,
       };
     },
-    onSuccess: async (result) => {
+    onSuccess: async ({ sent, ...result }) => {
       baseline.current = result;
-      setDraft(result.state);
+      // 자동 저장 중에 더 입력했으면 그 입력은 덮어쓰지 않고 남겨서 이어서 저장한다(2026-11-15).
+      setDraft((current) => (JSON.stringify(current) === sent ? result.state : current));
       await invalidateProductionSync(client);
     },
   });
@@ -201,6 +205,8 @@ export function PopupOrderWorkspace({ order }: { order: OrderListRow }) {
     },
   });
   const pending = save.isPending || session.isPending || addPreorder.isPending;
+  // 입력칸은 자동 저장 중에도 막지 않는다(막으면 입력 중 포커스가 빠진다). 세션/프리오더 생성 중에만 막는다.
+  const busy = session.isPending || addPreorder.isPending;
   const changeItem = (id: string, patch: Partial<PopupItem>) =>
     setDraft((d) => ({
       ...d,
@@ -209,6 +215,21 @@ export function PopupOrderWorkspace({ order }: { order: OrderListRow }) {
   const setPlan = (patch: Partial<typeof plan>) =>
     setDraft((d) => ({ ...d, plan: { ...d.plan, ...patch } }));
   const changed = dirty || end !== inputTime(plan.ends_at || null);
+  // 2026-11-15 (연): SAVE POP UP 버튼 없이 입력하면 자동 저장. 텍스트·수량은 잠깐 멈추면, 선택은 바로 저장.
+  const autosave = useAutosave({
+    snapshot: JSON.stringify({ draft, end }),
+    immediateKey: JSON.stringify([
+      plan.stage_id,
+      draft.status,
+      plan.items.map((i) => [i.id, i.product_id, i.standard_id]),
+      plan.checklist.map((c) => [c.id, c.done, c.group]),
+      plan.checklist.length,
+    ]),
+    dirty: changed,
+    saving: save.isPending,
+    enabled: !busy && !validation && !conflict && Boolean(draft.orderNumber.trim()),
+    save: () => save.mutate(),
+  });
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-3">
@@ -222,7 +243,7 @@ export function PopupOrderWorkspace({ order }: { order: OrderListRow }) {
               value={draft.orderNumber}
               aria-label="ORDER NUMBER"
               maxLength={200}
-              disabled={pending}
+              disabled={busy}
               onChange={(e) => setDraft((d) => ({ ...d, orderNumber: e.target.value }))}
             />
             <span aria-hidden="true">·</span>
@@ -231,14 +252,14 @@ export function PopupOrderWorkspace({ order }: { order: OrderListRow }) {
               value={plan.title}
               aria-label="POP UP TITLE"
               maxLength={200}
-              disabled={pending}
+              disabled={busy}
               onChange={(e) => setPlan({ title: e.target.value })}
             />
           </div>
         </div>
         <PopupStagePicker
           value={plan.stage_id || (draft.status === "COMPLETED" ? "COMPLETED" : "")}
-          disabled={pending}
+          disabled={busy}
           onChange={(stage_id) => setPlan({ stage_id })}
         />
       </div>
@@ -260,7 +281,7 @@ export function PopupOrderWorkspace({ order }: { order: OrderListRow }) {
           <OrderResultPhotosSection orderId={order.id} />
         </div>
       ) : (
-        <fieldset disabled={pending} className="space-y-3">
+        <fieldset disabled={busy} className="space-y-3">
           <SectionCard title="POP UP DETAIL">
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(0,2fr)_minmax(0,1.2fr)_minmax(0,1.3fr)_minmax(0,1.3fr)]">
               <Field label="팝업 이름">
@@ -550,25 +571,21 @@ export function PopupOrderWorkspace({ order }: { order: OrderListRow }) {
             </button>
           </p>
         )}
-        {(save.isError || session.isError) && (
+        {session.isError && (
           <p role="alert" className="text-sm text-destructive">
-            {(save.error ?? session.error)?.message}
+            {session.error?.message}
           </p>
         )}
         {validation && changed && <p className="text-xs text-destructive">{validation}</p>}
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            className={primaryButtonClass}
-            disabled={pending || !changed || !!validation || !draft.orderNumber.trim() || conflict}
-            onClick={() => save.mutate()}
-          >
-            {save.isPending ? "저장 중…" : "SAVE POP UP"}
-          </button>
-          <span className="text-xs text-muted-foreground">
-            {changed ? "타이틀·품목·수량·체크 상태를 저장하세요" : "✓ SAVED"}
-          </span>
-        </div>
+        {!draft.orderNumber.trim() && (
+          <p className="text-xs text-destructive">오더 번호를 입력하면 자동 저장됩니다</p>
+        )}
+        <AutosaveStatus
+          saving={save.isPending}
+          waiting={autosave.waiting}
+          error={save.error}
+          onRetry={autosave.retry}
+        />
       </div>
     </div>
   );

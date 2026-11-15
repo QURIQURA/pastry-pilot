@@ -46,6 +46,8 @@ import {
   type OrderProductLineKey,
 } from "@/lib/queries";
 import { DIETARY_ASSEMBLY_ENABLED } from "@/lib/feature-flags";
+import { useAutosave } from "@/hooks/use-autosave";
+import { AutosaveStatus } from "@/components/pilot/AutosaveStatus";
 import { resolveSlotGroup } from "@/lib/technique";
 import { ensureWorkSessionForOrder } from "@/lib/work-session";
 import { mouldOptionLabel } from "@/components/pilot/MouldSelect";
@@ -549,6 +551,7 @@ function OrderDetailPage() {
       }
 
       // DIETARY 태그 연결: 서버 값과 비교해 빠진 것만 지우고 새로 고른 것만 추가한다.
+      const sentDietaryTagIds = dietaryTagIds;
       if (dietaryTagIds !== null) {
         const toRemove = serverDietaryTagIds.filter((id) => !dietaryTagIds.includes(id));
         const toAdd = dietaryTagIds.filter((id) => !serverDietaryTagIds.includes(id));
@@ -567,10 +570,12 @@ function OrderDetailPage() {
           if (addError) throw addError;
         }
       }
+      return { sentDietaryTagIds };
     },
-    onSuccess: async () => {
+    onSuccess: async ({ sentDietaryTagIds }) => {
       await queryClient.invalidateQueries({ queryKey: ["order_dietary_tags"] });
-      setDietaryTagIds(null);
+      // 자동 저장 중에 태그를 또 바꿨으면 그 선택은 남겨서 이어서 저장되게 한다.
+      setDietaryTagIds((current) => (current === sentDietaryTagIds ? null : current));
       await queryClient.invalidateQueries({ queryKey: ["orders"] });
       await queryClient.invalidateQueries({ queryKey: ["orders", orderId] });
     },
@@ -582,6 +587,34 @@ function OrderDetailPage() {
   const handleSave = () => {
     const snapshotAtSave = currentSnapshot;
     save.mutate(undefined, { onSuccess: () => setSavedSnapshot(snapshotAtSave) });
+  };
+
+  // 2026-11-15 (연): SAVE 버튼 없이 입력하면 자동 저장. 텍스트는 잠깐 멈추면, 드롭다운·체크·별점은 바로 저장.
+  const autosave = useAutosave({
+    snapshot: currentSnapshot + JSON.stringify(dietaryTagIds),
+    immediateKey: JSON.stringify([
+      status,
+      customerId,
+      recipientRelationship,
+      occasion,
+      productLine,
+      eventDate,
+      paymentStatus,
+      dietaryBuildId,
+      audience,
+      makerSatisfaction,
+      customerSatisfaction,
+      dietaryTagIds,
+    ]),
+    dirty: isDirty,
+    saving: save.isPending,
+    enabled: Boolean(order.data) && order.data?.order_kind !== "POPUP",
+    save: handleSave,
+  });
+  const retrySave = async () => {
+    // 다른 화면에서 바뀐 경우가 많아 최신 값을 먼저 받아온 뒤(손댄 칸은 유지) 다시 저장한다.
+    await order.refetch();
+    autosave.retry();
   };
 
   const remove = useMutation({
@@ -709,6 +742,12 @@ function OrderDetailPage() {
               </option>
             ))}
           </select>
+          <AutosaveStatus
+            saving={save.isPending}
+            waiting={autosave.waiting}
+            error={save.error}
+            onRetry={() => void retrySave()}
+          />
         </div>
       </div>
 
@@ -1378,32 +1417,13 @@ function OrderDetailPage() {
       )}
 
       <div className="border border-border bg-card p-3">
-        {save.isError && (
-          <p className="mb-2 font-mono text-xs uppercase text-destructive">
-            {(save.error as Error).message}
-          </p>
-        )}
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            className={primaryButtonClass}
-            disabled={!isDirty || save.isPending}
-            onClick={handleSave}
-          >
-            {save.isPending ? "SAVING…" : "SAVE"}
-          </button>
-          {isDirty && (
-            <button
-              type="button"
-              className={buttonClass}
-              onClick={() => order.data && hydrateFromOrder(order.data)}
-            >
-              REVERT
-            </button>
-          )}
-          <span className="label-caps text-[10px] text-muted-foreground">
-            {save.isPending ? "SAVING…" : isDirty ? "UNSAVED CHANGES — press SAVE" : "✓ SAVED"}
-          </span>
+          <AutosaveStatus
+            saving={save.isPending}
+            waiting={autosave.waiting}
+            error={save.error}
+            onRetry={() => void retrySave()}
+          />
           <button
             type="button"
             className={buttonClass}
