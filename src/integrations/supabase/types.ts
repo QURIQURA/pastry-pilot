@@ -1998,6 +1998,7 @@ export type Database = {
           customer_feedback: string | null
           customer_id: string | null
           customer_satisfaction: number | null
+          fulfilment_method: string
           delivery_address: string | null
           design_notes: string | null
           dietary_build_id: string | null
@@ -2061,6 +2062,7 @@ export type Database = {
           customer_feedback?: string | null
           customer_id?: string | null
           customer_satisfaction?: number | null
+          fulfilment_method?: string
           delivery_address?: string | null
           design_notes?: string | null
           dietary_build_id?: string | null
@@ -2124,6 +2126,7 @@ export type Database = {
           customer_feedback?: string | null
           customer_id?: string | null
           customer_satisfaction?: number | null
+          fulfilment_method?: string
           delivery_address?: string | null
           design_notes?: string | null
           dietary_build_id?: string | null
