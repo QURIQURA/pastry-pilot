@@ -20,6 +20,9 @@ export function OrderProductLineSettings() {
         product_lines: next,
       }, { onConflict: "user_id" });
       if (error) throw error;
+      const { data: synced, error: syncError } = await supabase.functions.invoke("sync-product-lines-to-planner");
+      if (syncError) throw new Error("PILOT saved, but Planner sync failed: " + syncError.message);
+      if (!synced?.ok) throw new Error("PILOT saved, but Planner sync failed: " + (synced?.error ?? "Unknown error"));
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["pilot_settings"] });
