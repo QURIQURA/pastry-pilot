@@ -31,7 +31,7 @@ import {
   ORDER_OCCASION_CATEGORY_MAP,
   ORDER_RECIPIENT_RELATIONSHIP_OPTIONS,
   ORDER_PAYMENT_STATUSES,
-  ORDER_PRODUCT_LINES,
+  resolvedOrderProductLines,
   CORE_SLOT_LABELS,
   type CoreSlot,
   orderStatusLabel,
@@ -156,6 +156,7 @@ function OrderDetailPage() {
   const queryClient = useQueryClient();
   const order = useQuery(orderQuery(orderId));
   const pilotSettings = useQuery(pilotSettingsQuery());
+  const productLines = resolvedOrderProductLines(pilotSettings.data?.product_lines);
   const customers = useQuery(customersQuery());
   const workSession = useQuery(workSessionByOrderQuery(orderId));
   const productionSelections = useQuery(
@@ -1071,7 +1072,7 @@ function OrderDetailPage() {
                   onChange={(e) => setProductLine(e.target.value as OrderProductLineKey | "")}
                 >
                   <option value="">— SELECT —</option>
-                  {ORDER_PRODUCT_LINES.map((p) => (
+                  {productLines.filter((p) => p.active || p.key === productLine).map((p) => (
                     <option key={p.key} value={p.key}>
                       {p.label}
                     </option>
