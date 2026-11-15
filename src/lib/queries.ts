@@ -1828,12 +1828,23 @@ export type OrderPaymentStatus = (typeof ORDER_PAYMENT_STATUSES)[number];
 // planner_multiple_tasks.product_line에 실어보낸다. 이 key들은 WANN 쪽
 // wann-planner/src/lib/wann-groups.ts의 PRODUCT_LINES와 1:1로 맞춰져 있어야 한다 —
 // 여기서 바꾸면 그쪽도 같이 바꿔야 한다(지금은 공식 공유 테이블이 없어 양쪽에 각각 하드코딩).
-export const ORDER_PRODUCT_LINES = [
-  { key: "weekly_cake", label: "Weekly Surprise Cake" },
-  { key: "chiffon", label: "딸기·카카오 시폰 케이크" },
-  { key: "confectionery", label: "컨펙셔너리 박스" },
-] as const;
-export type OrderProductLineKey = (typeof ORDER_PRODUCT_LINES)[number]["key"];
+export type OrderProductLine = { key: string; label: string; active: boolean };
+export const ORDER_PRODUCT_LINES: OrderProductLine[] = [
+  { key: "weekly_cake", label: "Weekly Surprise Cake", active: true },
+  { key: "chiffon", label: "딸기·카카오 시폰 케이크", active: true },
+  { key: "confectionery", label: "컨펙셔너리 박스", active: true },
+];
+export type OrderProductLineKey = string;
+
+/** Read user-maintained lines, preserving original options until settings are configured. */
+export function resolvedOrderProductLines(value: unknown): OrderProductLine[] {
+  if (!Array.isArray(value)) return ORDER_PRODUCT_LINES;
+  const rows = value.filter((v): v is OrderProductLine =>
+    !!v && typeof v === "object" && typeof v.key === "string" &&
+    v.key.length > 0 && typeof v.label === "string" && v.label.trim().length > 0,
+  ).map((v) => ({ key: v.key, label: v.label, active: v.active !== false }));
+  return rows.length ? rows : ORDER_PRODUCT_LINES;
+}
 
 export const customersQuery = () =>
   queryOptions({
