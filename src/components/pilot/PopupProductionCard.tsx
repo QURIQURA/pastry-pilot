@@ -18,15 +18,22 @@ import { removePlannedComponent } from "@/lib/production-plan-actions";
 import { toast } from "sonner";
 import { addProductComponentsToSession } from "@/lib/product-session-components";
 import { buttonClass } from "./ui";
+import { PopupOrderStageSelect } from "./PopupStageSelect";
 
 export function PopupProductionCard({ order }: { order: OrderListRow }) {
   const plan = readPopupPlan(order.popup_plan);
   const settings = useQuery(pilotSettingsQuery());
   return (
     <section className="space-y-3 border border-border bg-card p-3">
-      <Link className="text-sm underline" to="/orders/$orderId" params={{ orderId: order.id }}>
-        {order.order_number} · POP UP · {plan.title}
-      </Link>
+      {/* 2026-11-15 (연): 케이크 카드처럼 여기서 바로 진행 단계를 바꾼다. 즉시 저장되고,
+          DB 트리거(normalize_snl_stage)가 COMPLETED 단계를 오더 STATUS COMPLETED로 맞춰
+          ORDER HISTORY로 넘어간다. */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Link className="text-sm underline" to="/orders/$orderId" params={{ orderId: order.id }}>
+          {order.order_number} · POP UP · {plan.title}
+        </Link>
+        <PopupOrderStageSelect order={order} />
+      </div>
       <p className="text-xs text-muted-foreground">
         {order.pickup_at ? formatDateTime(order.pickup_at) : "일정 미지정"} · {plan.location}
       </p>
