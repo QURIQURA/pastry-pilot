@@ -19,6 +19,14 @@ import {
 } from "@/components/pilot/OrderTitle";
 import { BlockTaskDetails, BlockTimerChip } from "@/components/pilot/BlockTaskDetails";
 import { SessionExperimentButton } from "@/components/pilot/SessionExperimentButton";
+import {
+  PlannerAvailabilityLayer,
+  PlannerCapacityStrip,
+  PlannerConflictChip,
+  segmentsForDate,
+  usePlannerAvailability,
+  usePlannerContextToggle,
+} from "@/components/pilot/PlannerAvailability";
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -306,6 +314,10 @@ export function ProductionDashboard() {
     [dailyQuery.data, date],
   );
   const dailyEnd = (t: DailyTask) => (resize?.id === t.id ? resize.endMin : toMin(t.end_time));
+  // YEON OS #4: Planner availability — read-only background context; never blocks scheduling.
+  const [showPlanner, setShowPlanner] = usePlannerContextToggle();
+  const plannerAvailability = usePlannerAvailability(date, showPlanner);
+  const plannerSegments = showPlanner ? segmentsForDate(plannerAvailability.data, date) : null;
   // 컴포넌트 블록이 선택돼 있으면 그쪽이 우선(둘이 동시에 선택되지 않게).
   const selectedDaily = selectedId
     ? null
@@ -1215,6 +1227,16 @@ export function ProductionDashboard() {
                 {dayBlocks.length}개 블록 · {dayDailies.length}개 데일리
               </span>
             </div>
+            <PlannerCapacityStrip
+              on={showPlanner}
+              onToggle={setShowPlanner}
+              query={plannerAvailability}
+              segments={plannerSegments}
+              work={[
+                ...dayBlocks.map((b) => ({ start: toMin(b.start_time), end: effectiveEnd(b) })),
+                ...dayDailies.map((t) => ({ start: toMin(t.start_time), end: dailyEnd(t) })),
+              ]}
+            />
 
             {/* ── DAILY / QUICK ADD: 데일리 태스크 + 시간 배정 전 컴포넌트 여러 개 한 번에 ── */}
             <div className="space-y-2 border border-border bg-card p-3">
@@ -1351,6 +1373,13 @@ export function ProductionDashboard() {
               className="relative border border-border bg-card"
               style={{ height: gridHeight, paddingLeft: 48 }}
             >
+              {plannerSegments && (
+                <PlannerAvailabilityLayer
+                  segments={plannerSegments}
+                  pxPerMin={PX_PER_MIN}
+                  left={48}
+                />
+              )}
               {HOURS.map((h) => (
                 <div
                   key={h}
@@ -1459,6 +1488,11 @@ export function ProductionDashboard() {
                               </span>
                               {blockTitle(b, row)}
                             </span>
+                            <PlannerConflictChip
+                              segments={plannerSegments}
+                              start={start}
+                              end={end}
+                            />
                           </div>
                           {/* 타이머 — 박스 없이 텍스트로 */}
                           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-2 pt-0.5">
@@ -1590,6 +1624,7 @@ export function ProductionDashboard() {
                             )}
                             {t.name}
                           </p>
+                          <PlannerConflictChip segments={plannerSegments} start={start} end={end} />
                         </div>
                         <div
                           className="absolute flex cursor-ns-resize items-center gap-1 px-2 font-mono text-[11px] opacity-70"
