@@ -96,7 +96,7 @@ export function PopupOrderWorkspace({ order }: { order: OrderListRow }) {
         p_plan: saved.plan as unknown as Json,
         p_start: start,
         p_status: draft.status,
-      });
+      } as never);
       if (error) throw error;
       const result = data as {
         updated_at: string;

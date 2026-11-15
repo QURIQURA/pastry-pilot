@@ -1,3 +1,4 @@
+import { OrderProductLineSettings } from "@/components/pilot/OrderProductLineSettings";
 import { PopupWorkflowSettings } from "@/components/pilot/PopupWorkflowSettings";
 import { useState, type ReactNode } from "react";
 import { createFileRoute } from "@tanstack/react-router";
@@ -105,6 +106,9 @@ function SettingsPage() {
       </SettingsSection>
 
       <SettingsGroup label="ORDERS">
+        <SettingsSection title="PRODUCT LINES" defaultOpen>
+          <OrderProductLineSettings />
+        </SettingsSection>
         <SettingsSection title="GOOGLE 캘린더 구독 (.ics)">
           <OrdersCalendarFeedSection />
         </SettingsSection>

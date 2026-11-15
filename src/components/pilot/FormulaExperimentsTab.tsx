@@ -423,7 +423,7 @@ function NewExperimentModal({
         p_base_version_id: baseId,
         p_title: title.trim(),
         p_hypothesis: hypothesis.trim() || undefined,
-      });
+      } as never);
       if (error) throw error;
     },
     onSuccess: async () => {

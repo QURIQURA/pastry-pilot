@@ -314,7 +314,7 @@ export function OrderComponentPlanRow({
         p_mould_qty: useMould ? Number(qtyText) : null,
         p_base_weight_id: useBase ? draft.bw : null,
         p_base_weight_qty: useBase ? bwQtyNum : null,
-      });
+      } as never);
       if (error) throw error;
       // 재료 기준이면 기준 재료/목표 g를 함께 저장(요약에 그대로 보여주기 위함), 다른 방식이면 비운다.
       const { data: basis, error: basisError } = await supabase
