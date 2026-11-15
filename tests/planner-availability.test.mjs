@@ -85,21 +85,41 @@ test("parse: errors and malformed bodies become unavailable, never free time", (
   assert.equal(ok.days[0].segments.length, 5);
 });
 
-test("carer-first segments: Yeon at night is busy and Shared at night is unknown, never check", () => {
-  // Planner output for a Sunday with a Yeon override 05-08 and Shared 20-22
+test("carer-first segments: Yeon at night busy, Shared/unrecorded night unknown, Lach early check", () => {
+  // Planner output for a Sunday: nothing recorded 00-05, Yeon 05-20, Shared 20-22, nothing 22-24
   const sunday = [
-    seg("00:00", "05:00", "check", "Outside Planner hours"),
+    seg("00:00", "05:00", "unknown", "No carer recorded"),
     seg("05:00", "20:00", "busy", "Tanji with Yeon"),
     seg("20:00", "22:00", "unknown", "Tanji with Yeon & Lach"),
-    seg("22:00", "24:00", "check", "Outside Planner hours"),
+    seg("22:00", "24:00", "unknown", "No carer recorded"),
   ];
   const s = lib.summarizeCapacity(sunday, [{ start: m("06:00"), end: m("07:00") }]);
   assert.equal(s.available, 0);
-  assert.equal(s.check, 5 * 60 + 2 * 60);
+  assert.equal(s.check, 0);
+  assert.equal(s.remaining, 0);
   assert.equal(s.outside, 60);
   assert.equal(lib.conflictFor(sunday, { start: m("06:00"), end: m("07:00") }).state, "busy");
   assert.equal(lib.conflictFor(sunday, { start: m("20:30"), end: m("21:00") }).state, "unknown");
-  assert.equal(lib.conflictFor(sunday, { start: m("23:00"), end: m("23:30") }).state, "check");
+  assert.equal(lib.conflictFor(sunday, { start: m("23:00"), end: m("23:30") }).state, "unknown");
+  // Saturday: Lach 06-08 is check, a Planner task 06:30-07:00 is busy, Lach 08-20 available
+  const saturday = [
+    seg("06:00", "06:30", "check", "Tanji with Lach · outside 08–20"),
+    seg("06:30", "07:00", "busy", "Planner schedule"),
+    seg("07:00", "08:00", "check", "Tanji with Lach · outside 08–20"),
+    seg("08:00", "20:00", "available", "Tanji with Lach"),
+  ];
+  assert.equal(lib.conflictFor(saturday, { start: m("07:00"), end: m("08:30") }).state, "check");
+  assert.equal(lib.conflictFor(saturday, { start: m("06:00"), end: m("08:30") }).state, "busy");
+  assert.equal(lib.conflictFor(saturday, { start: m("08:00"), end: m("20:00") }), null);
+  const cap = lib.summarizeCapacity(saturday, [
+    { start: m("07:30"), end: m("09:00") }, // work session block straddling 08:00
+    { start: m("08:30"), end: m("09:30") }, // DAILY task overlapping it: counted once
+  ]);
+  assert.equal(cap.available, 12 * 60);
+  assert.equal(cap.allocated, 90);
+  assert.equal(cap.remaining, 12 * 60 - 90);
+  assert.equal(cap.check, 90);
+  assert.equal(cap.outside, 30);
 });
 
 test("formatMinutes", () => {
