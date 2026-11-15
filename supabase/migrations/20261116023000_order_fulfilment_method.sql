@@ -1,4 +1,4 @@
-alter table public.orders add column if not exists fulfilment_method text not null default 'PICKUP' check(fulfilment_method in ('PICKUP','DELIVERY'));
+alter table public.orders add column if not exists fulfilment_method text not null default 'DELIVERY' check(fulfilment_method in ('PICKUP','DELIVERY'));
 CREATE OR REPLACE FUNCTION public.sync_confirmed_order_to_planner()
  RETURNS trigger
  LANGUAGE plpgsql
