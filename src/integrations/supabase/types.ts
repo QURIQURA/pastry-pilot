@@ -2282,6 +2282,7 @@ export type Database = {
       }
       pilot_settings: {
         Row: {
+          product_lines: Json | null
           customer_care_steps: Json | null
           ics_feed_token: string | null
           monthly_overhead: number
@@ -2294,6 +2295,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          product_lines?: Json | null
           customer_care_steps?: Json | null
           ics_feed_token?: string | null
           monthly_overhead?: number
@@ -2306,6 +2308,7 @@ export type Database = {
           user_id?: string
         }
         Update: {
+          product_lines?: Json | null
           customer_care_steps?: Json | null
           ics_feed_token?: string | null
           monthly_overhead?: number
