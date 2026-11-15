@@ -5,11 +5,12 @@
  * Pilot only displays it, read-only, behind the existing DASHBOARD daily timeline.
  * Nothing here blocks or changes scheduling.
  *
- * States (policy approved by 연, 2026-11-15):
- *  - available: Tanji with Lach / Tanji at Sage, no Planner schedule
- *  - check:     possible but must be confirmed (before 08:00 / from 20:00, or an untimed-end Planner task)
- *  - unknown:   Shared (carer not decided) or Unassigned — not counted as available
- *  - busy:      Tanji with Yeon, or a timed Planner schedule
+ * States (policy approved by 연, 2026-11-15; the carer decides first, Planner computes this):
+ *  - busy:      a timed Planner schedule (whoever the carer is), or Tanji with Yeon at any hour
+ *  - available: Tanji with Lach / Tanji at Sage between 08:00 and 20:00
+ *  - check:     Lach / Sage time before 08:00 or from 20:00, or an unrecorded night hour —
+ *               work is possible but must be confirmed; not counted as available
+ *  - unknown:   Shared (carer not decided) or Unassigned at any hour — not counted as available
  */
 
 export type AvailabilityState = "available" | "check" | "unknown" | "busy";

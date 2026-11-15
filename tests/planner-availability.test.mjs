@@ -85,6 +85,23 @@ test("parse: errors and malformed bodies become unavailable, never free time", (
   assert.equal(ok.days[0].segments.length, 5);
 });
 
+test("carer-first segments: Yeon at night is busy and Shared at night is unknown, never check", () => {
+  // Planner output for a Sunday with a Yeon override 05-08 and Shared 20-22
+  const sunday = [
+    seg("00:00", "05:00", "check", "Outside Planner hours"),
+    seg("05:00", "20:00", "busy", "Tanji with Yeon"),
+    seg("20:00", "22:00", "unknown", "Tanji with Yeon & Lach"),
+    seg("22:00", "24:00", "check", "Outside Planner hours"),
+  ];
+  const s = lib.summarizeCapacity(sunday, [{ start: m("06:00"), end: m("07:00") }]);
+  assert.equal(s.available, 0);
+  assert.equal(s.check, 5 * 60 + 2 * 60);
+  assert.equal(s.outside, 60);
+  assert.equal(lib.conflictFor(sunday, { start: m("06:00"), end: m("07:00") }).state, "busy");
+  assert.equal(lib.conflictFor(sunday, { start: m("20:30"), end: m("21:00") }).state, "unknown");
+  assert.equal(lib.conflictFor(sunday, { start: m("23:00"), end: m("23:30") }).state, "check");
+});
+
 test("formatMinutes", () => {
   assert.equal(lib.formatMinutes(0), "0m");
   assert.equal(lib.formatMinutes(45), "45m");
