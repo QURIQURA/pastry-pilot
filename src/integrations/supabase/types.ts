@@ -2905,6 +2905,64 @@ export type Database = {
         }
         Relationships: []
       }
+      shco_cs_archives: {
+        Row: {
+          archived_at: string
+          archived_by: string
+          request_id: string
+        }
+        Insert: {
+          archived_at?: string
+          archived_by?: string
+          request_id: string
+        }
+        Update: {
+          archived_at?: string
+          archived_by?: string
+          request_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shco_cs_archives_request_id_fkey"
+            columns: ["request_id"]
+            isOneToOne: true
+            referencedRelation: "shco_order_requests"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      shco_cs_progress: {
+        Row: {
+          delivered_at: string | null
+          order_sms_sent_at: string | null
+          request_id: string
+          updated_at: string
+          updated_by: string
+        }
+        Insert: {
+          delivered_at?: string | null
+          order_sms_sent_at?: string | null
+          request_id: string
+          updated_at?: string
+          updated_by?: string
+        }
+        Update: {
+          delivered_at?: string | null
+          order_sms_sent_at?: string | null
+          request_id?: string
+          updated_at?: string
+          updated_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shco_cs_progress_request_id_fkey"
+            columns: ["request_id"]
+            isOneToOne: true
+            referencedRelation: "shco_order_requests"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       shco_email_log: {
         Row: {
           created_at: string
@@ -3245,6 +3303,44 @@ export type Database = {
           wedding_enabled?: boolean
         }
         Relationships: []
+      }
+      shco_sms_confirmations: {
+        Row: {
+          confirmed_at: string | null
+          note: string
+          request_id: string
+          sent_at: string
+          status: string
+          updated_at: string
+          updated_by: string
+        }
+        Insert: {
+          confirmed_at?: string | null
+          note?: string
+          request_id: string
+          sent_at?: string
+          status?: string
+          updated_at?: string
+          updated_by?: string
+        }
+        Update: {
+          confirmed_at?: string | null
+          note?: string
+          request_id?: string
+          sent_at?: string
+          status?: string
+          updated_at?: string
+          updated_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shco_sms_confirmations_request_id_fkey"
+            columns: ["request_id"]
+            isOneToOne: true
+            referencedRelation: "shco_order_requests"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       size_mapping_log: {
         Row: {
