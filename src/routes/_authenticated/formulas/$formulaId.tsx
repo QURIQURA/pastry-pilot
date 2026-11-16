@@ -5,6 +5,8 @@ import { type ScaleMode } from "@/lib/recipe-scale";
 import { AdjustInput, ScaleAllPanel } from "@/components/pilot/RecipeScaleControls";
 import { FormulaVersionDietaryTags } from "@/components/pilot/FormulaVersionDietaryTags";
 import { DIETARY_ASSEMBLY_ENABLED } from "@/lib/feature-flags";
+import { useAutosave } from "@/hooks/use-autosave";
+import { AutosaveStatus } from "@/components/pilot/AutosaveStatus";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -118,7 +120,7 @@ export interface FunctionalRowPatch {
   secondary_unit?: string | null;
 }
 
-/** EDIT 모드에서 저장 전까지 들고 있는 로컬 초안 — SAVE를 눌러야 실제로 반영된다 */
+/** 화면에서 편집 중인 로컬 초안 — 입력하면 자동 저장된다(2026-11-15, SAVE 버튼 제거) */
 interface RowDraft {
   amount: string;
   unit: string;
@@ -152,15 +154,13 @@ interface PageDraft {
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
 
-/** 헤더의 기법/방법/기준배합/컴포넌트/SAVE — 중요도가 낮은 부가 정보라 한 박스에 모으고
+/** 헤더의 기법/방법/기준배합/컴포넌트/저장 상태 — 중요도가 낮은 부가 정보라 한 박스에 모으고
  * 버튼도 표준 크기(min-h-44px)보다 작게 줄인다. 앱 전역 selectClass/buttonClass는 그대로
  * 두고(다른 화면 터치 타겟에 영향 없게) 이 페이지 안에서만 쓰는 축소 버전. */
 const compactSelectClass =
   "min-h-[28px] border border-input bg-background px-2 py-0.5 font-body text-xs text-foreground outline-none focus:border-foreground disabled:opacity-60";
 const compactButtonClass =
   "label-caps inline-flex min-h-[28px] items-center justify-center border border-input bg-background px-2 py-0.5 text-[11px] text-foreground transition-colors hover:bg-secondary disabled:opacity-40";
-const compactPrimaryButtonClass =
-  "label-caps inline-flex min-h-[28px] items-center justify-center border border-foreground bg-foreground px-2 py-0.5 text-[11px] text-background transition-colors hover:opacity-90 disabled:opacity-40";
 
 function FormulaDetailPage() {
   const { formulaId } = Route.useParams();
@@ -352,7 +352,7 @@ function FormulaDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [versionId, formula.data, version, ingredients.isSuccess, batchPresetsQuery.isSuccess]);
 
-  /** draft가 저장된 값과 실제로 다른 부분이 있는지 — SAVE 버튼 활성화 조건 */
+  /** draft가 저장된 값과 실제로 다른 부분이 있는지 — 자동 저장 대상인지 */
   const isDirty = (() => {
     if (!draft || !formula.data || !version) return false;
     if (draft.name.trim() !== formula.data.name) return true;
@@ -619,10 +619,11 @@ function FormulaDetailPage() {
     },
   });
 
-  /** SAVE — draft와 저장된 값을 비교해 바뀐 것만 커밋한다 */
+  /** 자동 저장 — draft와 저장된 값을 비교해 바뀐 것만 커밋한다 */
   const saveAll = useMutation({
-    mutationFn: async () => {
-      if (!draft || !formula.data || !version) return;
+    mutationFn: async (): Promise<{ baseDeclined: boolean }> => {
+      let baseDeclined = false;
+      if (!draft || !formula.data || !version) return { baseDeclined };
 
       // 이름 / component
       const formulaPatch: { name?: string; component_id?: string | null } = {};
@@ -645,6 +646,7 @@ function FormulaDetailPage() {
           techniqueId: draft.techniqueId || null,
           isBase: draft.isBase,
         });
+        baseDeclined = draft.isBase && !base;
         const { error } = await supabase
           .from("formulas")
           .update({
@@ -745,13 +747,40 @@ function FormulaDetailPage() {
           if (error) throw error;
         }
       }
+      return { baseDeclined };
     },
-    onSuccess: async () => {
+    onSuccess: async ({ baseDeclined }) => {
+      // 기준 배합 교체 확인에서 "취소"를 고르면 체크도 풀어 둔다(안 그러면 계속 저장 대기로 남는다).
+      if (baseDeclined) setDraft((d) => (d ? { ...d, isBase: false } : d));
       // draft는 그대로 둔다 — 방금 저장한 값과 이미 같으므로, 재조회가 끝나면 isDirty가
       // 자연히 false가 된다(별도로 편집모드를 껐다 켤 필요 없음 — 페이지는 항상 편집 가능).
       await invalidate();
     },
   });
+
+  // 2026-11-15 (연): SAVE 버튼 없이 입력하면 자동 저장. 숫자·메모는 잠깐 멈추면, 드롭다운·체크는 바로 저장.
+  const autosave = useAutosave({
+    snapshot: JSON.stringify(draft),
+    immediateKey: JSON.stringify(
+      draft && [
+        draft.techniqueId,
+        draft.isBase,
+        draft.methodId,
+        draft.componentId,
+        draft.mouldId,
+        draft.baseWeightId,
+        Object.values(draft.rows).map((r) => r.unit),
+        Object.values(draft.batches).map((b) => b.mouldId),
+      ],
+    ),
+    dirty: isDirty,
+    saving: saveAll.isPending,
+    enabled: Boolean(draft && version),
+    save: () => saveAll.mutate(),
+  });
+  // 버전을 바꾸면 초안이 새 버전으로 바뀌므로, 그 전에 남은 입력을 이전 버전에 저장한다.
+  const flushAutosave = autosave.flush;
+  useEffect(() => () => flushAutosave(), [versionId, flushAutosave]);
 
   const createVersion = useMutation({
     mutationFn: async ({ summary, reason }: { summary: string; reason: string }) => {
@@ -989,30 +1018,13 @@ function FormulaDetailPage() {
           {canEditPage && (
             <>
               <span className="mx-1 h-4 w-px bg-border" aria-hidden />
-              <button
-                type="button"
-                className={compactPrimaryButtonClass}
-                disabled={!draft || !isDirty || saveAll.isPending}
-                onClick={() => saveAll.mutate()}
-              >
-                {saveAll.isPending ? "SAVING…" : "SAVE"}
-              </button>
-              {isDirty && (
-                <button
-                  type="button"
-                  className={compactButtonClass}
-                  onClick={() => setDraft(buildDraft())}
-                >
-                  되돌리기
-                </button>
-              )}
-              <span className="label-caps text-[10px] text-muted-foreground">
-                {!draft
-                  ? "LOADING…"
-                  : isDirty
-                    ? "변경 사항이 있습니다 — 저장하려면 SAVE"
-                    : "✓ SAVED"}
-              </span>
+              <AutosaveStatus
+                loading={!draft}
+                saving={saveAll.isPending}
+                waiting={autosave.waiting}
+                error={saveAll.error}
+                onRetry={autosave.retry}
+              />
             </>
           )}
         </div>
@@ -1857,7 +1869,7 @@ function UnifiedIngredientRow({
         )}
       </td>
 
-      {/* BASE ×1 — amount 입력 (EDIT 중에만 실제로 바뀌고, SAVE 전까지 저장되지 않는다) */}
+      {/* BASE ×1 — amount 입력 (입력하면 잠깐 뒤 자동 저장된다) */}
       <td className="border-r border-border bg-secondary/40 px-2 py-1 align-top">
         <input
           type="number"
