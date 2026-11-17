@@ -169,6 +169,8 @@ export function ProductionDashboard() {
   const [date, setDate] = useState(() => toLocalDateString());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showSessionNotes, setShowSessionNotes] = useState(false);
+  // Date-scoped visual partition only; no recipe, merge, or progress data is changed.
+  const [secondMatrixRows, setSecondMatrixRows] = useState<Record<string, string[]>>({});
   // 타임라인 아래 작업 박스(계량/워크플로 등)가 보여줄 세션 — 블록 선택 또는 대기공간 카드 클릭으로 정해진다.
   const [focusRowId, setFocusRowId] = useState<string | null>(null);
   const [poolOver, setPoolOver] = useState(false);
@@ -358,6 +360,15 @@ export function ProductionDashboard() {
         }),
     [workspaceSessions, dayBlocks],
   );
+  const secondMatrixIds = secondMatrixRows[date] ?? [];
+  const firstMatrixItems = dayWorkItems.filter((i) => !secondMatrixIds.includes(i.rowId));
+  const secondMatrixItems = dayWorkItems.filter((i) => secondMatrixIds.includes(i.rowId));
+  const moveMatrixRow = (rowId: string, toSecond: boolean) => {
+    setSecondMatrixRows((prev) => {
+      const ids = prev[date] ?? [];
+      return { ...prev, [date]: toSecond ? [...new Set([...ids, rowId])] : ids.filter((id) => id !== rowId) };
+    });
+  };
   // 같은 레시피 버전 MERGE — 타임라인도 한 블록으로 합쳐 보여준다(같은 반죽을 함께 굽는 것).
   const { mergedVersions, toggleMerge } = useProductionMerge(dayWorkItems.map((i) => i.rowId));
   // 오른쪽 디테일 창 — 선택한 블록(또는 대기공간에서 고른 카드)의 컴포넌트 하나. 병합돼 있으면 같이 묶인 것만 더한다.
@@ -2053,18 +2064,35 @@ export function ProductionDashboard() {
         </div>
       </div>
 
-      {/* ── WORK VIEW(계량) — 그날 모든 포뮬라, 맨 아래 단일 열 ── */}
+      {/* Two independently rendered weighing matrices, grouped by ingredient within each table. */}
       {dayWorkItems.length > 0 && (
-        <DayWorkView
-          part="WORK_VIEW"
-          key={`work-${date}`}
-          items={dayWorkItems}
-          mergedVersions={mergedVersions}
-          onToggleMerge={(versionId) => void toggleMergeAndAlign(versionId)}
-          labels={Object.fromEntries(
-            rows.map((r) => [r.id, `${r.order.order_number} · ${r.slot ?? ""}`]),
+        <section className="space-y-3" aria-label="Split production weighing matrices">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="label-caps text-xs">WORK VIEW · WEIGHING MATRICES</span>
+            <span className="text-xs text-muted-foreground">Choose which recipes belong in the lower table. Quantities and progress remain linked.</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {dayWorkItems.map(({ rowId }) => (
+              <label key={rowId} className="flex cursor-pointer items-center gap-2 border border-border px-2 py-1 text-xs">
+                <input type="checkbox" checked={secondMatrixIds.includes(rowId)} onChange={(e) => moveMatrixRow(rowId, e.target.checked)} />
+                <span>{rowById.get(rowId)?.formula_versions?.formulas?.name ?? rowById.get(rowId)?.slot ?? rowId.slice(0, 8)}</span>
+                <span className="text-muted-foreground">{secondMatrixIds.includes(rowId) ? "TABLE 2" : "TABLE 1"}</span>
+              </label>
+            ))}
+          </div>
+          {firstMatrixItems.length > 0 && (
+            <div>
+              <p className="label-caps mb-2 text-xs">TABLE 1</p>
+              <DayWorkView part="WORK_VIEW" key={`work-first-${date}`} items={firstMatrixItems} mergedVersions={mergedVersions} onToggleMerge={(versionId) => void toggleMergeAndAlign(versionId)} labels={Object.fromEntries(rows.map((r) => [r.id, `${r.order.order_number} · ${r.slot ?? ""}`]))} />
+            </div>
           )}
-        />
+          {secondMatrixItems.length > 0 && (
+            <div>
+              <p className="label-caps mb-2 text-xs">TABLE 2</p>
+              <DayWorkView part="WORK_VIEW" key={`work-second-${date}`} items={secondMatrixItems} mergedVersions={mergedVersions} onToggleMerge={(versionId) => void toggleMergeAndAlign(versionId)} labels={Object.fromEntries(rows.map((r) => [r.id, `${r.order.order_number} · ${r.slot ?? ""}`]))} />
+            </div>
+          )}
+        </section>
       )}
 
       {/* ── 세션 메모 ── */}
