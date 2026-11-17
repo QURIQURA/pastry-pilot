@@ -298,6 +298,17 @@ export function DevWorkDrawer({
                         sync: {r.sync_error}
                       </span>
                     )}
+                    {/* Auto-Pilot (#18) keeps its state in GitHub labels; show them as-is. */}
+                    {r.gh_labels
+                      .filter((l) => l.startsWith("autopilot:") || l === "yeon-auto")
+                      .map((l) => (
+                        <span
+                          key={l}
+                          className="ml-1 border border-border px-1 font-mono text-[10px] text-muted-foreground"
+                        >
+                          {l}
+                        </span>
+                      ))}
                   </span>
                   <button
                     type="button"
