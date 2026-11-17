@@ -1191,7 +1191,6 @@ export const dashboardComponentsQuery = () =>
           .select(
             "id, multiplier, mould_id, mould_qty, base_weight_id, base_weight_qty, target_quantity_g, formula_version_id, slot, work_session_id, planner_task_id, sort_order, formula_versions(id, formula_version_ingredients(amount_source), formulas(id, name, derived_from_formula_id, components(id, name))), work_sessions!inner(id, status, order_id, orders(id, order_number, status, pickup_at, event_date, least_liked_flavours, products(name), customers(name)))",
           )
-          .eq("kind", "CORE")
           .is("parent_selection_id", null)
           .order("sort_order", { ascending: true }),
       ) as unknown as {
