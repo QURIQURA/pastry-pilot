@@ -178,7 +178,7 @@ export function ProductionDashboard() {
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
       return Object.fromEntries(
         Object.entries(parsed).filter(([date, ids]) =>
-          /^\\d{4}-\\d{2}-\\d{2}$/.test(date) &&
+          /^\d{4}-\d{2}-\d{2}$/.test(date) &&
           Array.isArray(ids) && ids.every((id) => typeof id === "string"),
         ),
       ) as Record<string, string[]>;
