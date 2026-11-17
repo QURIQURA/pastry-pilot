@@ -2075,7 +2075,7 @@ export function ProductionDashboard() {
             {dayWorkItems.map(({ rowId }) => (
               <label key={rowId} className="flex cursor-pointer items-center gap-2 border border-border px-2 py-1 text-xs">
                 <input type="checkbox" checked={secondMatrixIds.includes(rowId)} onChange={(e) => moveMatrixRow(rowId, e.target.checked)} />
-                <span>{rowById.get(rowId)?.formula_versions?.formulas?.name ?? rowById.get(rowId)?.slot ?? rowId.slice(0, 8)}</span>
+                <span>{`${rowById.get(rowId)?.order.order_number ?? ""} · ${rowById.get(rowId)?.slot ?? rowId.slice(0, 8)}`}</span>
                 <span className="text-muted-foreground">{secondMatrixIds.includes(rowId) ? "TABLE 2" : "TABLE 1"}</span>
               </label>
             ))}
