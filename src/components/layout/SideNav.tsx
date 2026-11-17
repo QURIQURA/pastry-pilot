@@ -13,6 +13,8 @@ const TOP_ITEMS = [
   { label: "COST", to: "/cost" },
   { label: "PRODUCTION", to: "/production" },
   { label: "DESIGN BOARD", to: "/design-moodboard" },
+  // 2026-11-17 pastry-pilot#17: YEON OS Development Board (software work across SHCS/PILOT/Planner).
+  { label: "DEV BOARD", to: "/dev-board" },
   { label: "EFFICIENCY", to: "/efficiency" },
   { label: "INVENTORY", to: "/inventory" },
   { label: "INGREDIENTS", to: "/ingredients" },

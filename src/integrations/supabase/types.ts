@@ -655,6 +655,226 @@ export type Database = {
         }
         Relationships: []
       }
+      dev_work_events: {
+        Row: {
+          created_at: string
+          from_status: string | null
+          id: string
+          to_status: string
+          user_id: string
+          work_item_id: string
+        }
+        Insert: {
+          created_at?: string
+          from_status?: string | null
+          id?: string
+          to_status: string
+          user_id: string
+          work_item_id: string
+        }
+        Update: {
+          created_at?: string
+          from_status?: string | null
+          id?: string
+          to_status?: string
+          user_id?: string
+          work_item_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "dev_work_events_work_item_id_fkey"
+            columns: ["work_item_id"]
+            isOneToOne: false
+            referencedRelation: "dev_work_items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      dev_work_items: {
+        Row: {
+          acceptance_criteria: string | null
+          actual_result: string | null
+          affected_os: string[]
+          blocker: string | null
+          created_at: string
+          deployment: string | null
+          expected_outcome: string | null
+          goal: string | null
+          id: string
+          implementation_notes: string | null
+          owning_os: string
+          priority: string
+          rationale: string | null
+          runtime_verification: string | null
+          scope: string | null
+          status: string
+          tests: string | null
+          title: string
+          updated_at: string
+          user_id: string
+          verification_evidence: string | null
+          work_key: string
+        }
+        Insert: {
+          acceptance_criteria?: string | null
+          actual_result?: string | null
+          affected_os?: string[]
+          blocker?: string | null
+          created_at?: string
+          deployment?: string | null
+          expected_outcome?: string | null
+          goal?: string | null
+          id?: string
+          implementation_notes?: string | null
+          owning_os?: string
+          priority?: string
+          rationale?: string | null
+          runtime_verification?: string | null
+          scope?: string | null
+          status?: string
+          tests?: string | null
+          title: string
+          updated_at?: string
+          user_id?: string
+          verification_evidence?: string | null
+          work_key: string
+        }
+        Update: {
+          acceptance_criteria?: string | null
+          actual_result?: string | null
+          affected_os?: string[]
+          blocker?: string | null
+          created_at?: string
+          deployment?: string | null
+          expected_outcome?: string | null
+          goal?: string | null
+          id?: string
+          implementation_notes?: string | null
+          owning_os?: string
+          priority?: string
+          rationale?: string | null
+          runtime_verification?: string | null
+          scope?: string | null
+          status?: string
+          tests?: string | null
+          title?: string
+          updated_at?: string
+          user_id?: string
+          verification_evidence?: string | null
+          work_key?: string
+        }
+        Relationships: []
+      }
+      dev_work_refs: {
+        Row: {
+          created_at: string
+          gh_draft: boolean | null
+          gh_labels: string[]
+          gh_merged_at: string | null
+          gh_state: string | null
+          gh_updated_at: string | null
+          id: string
+          kind: string
+          number: number | null
+          repo: string | null
+          sync_error: string | null
+          sync_key: string
+          synced_at: string | null
+          title: string | null
+          url: string
+          user_id: string
+          work_item_id: string
+        }
+        Insert: {
+          created_at?: string
+          gh_draft?: boolean | null
+          gh_labels?: string[]
+          gh_merged_at?: string | null
+          gh_state?: string | null
+          gh_updated_at?: string | null
+          id?: string
+          kind: string
+          number?: number | null
+          repo?: string | null
+          sync_error?: string | null
+          sync_key: string
+          synced_at?: string | null
+          title?: string | null
+          url: string
+          user_id?: string
+          work_item_id: string
+        }
+        Update: {
+          created_at?: string
+          gh_draft?: boolean | null
+          gh_labels?: string[]
+          gh_merged_at?: string | null
+          gh_state?: string | null
+          gh_updated_at?: string | null
+          id?: string
+          kind?: string
+          number?: number | null
+          repo?: string | null
+          sync_error?: string | null
+          sync_key?: string
+          synced_at?: string | null
+          title?: string | null
+          url?: string
+          user_id?: string
+          work_item_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "dev_work_refs_work_item_id_fkey"
+            columns: ["work_item_id"]
+            isOneToOne: false
+            referencedRelation: "dev_work_items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      dev_work_relations: {
+        Row: {
+          created_at: string
+          from_id: string
+          id: string
+          kind: string
+          to_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          from_id: string
+          id?: string
+          kind?: string
+          to_id: string
+          user_id?: string
+        }
+        Update: {
+          created_at?: string
+          from_id?: string
+          id?: string
+          kind?: string
+          to_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "dev_work_relations_from_id_fkey"
+            columns: ["from_id"]
+            isOneToOne: false
+            referencedRelation: "dev_work_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "dev_work_relations_to_id_fkey"
+            columns: ["to_id"]
+            isOneToOne: false
+            referencedRelation: "dev_work_items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       dietary_build_items: {
         Row: {
           build_id: string

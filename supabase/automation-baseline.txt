@@ -1,0 +1,5 @@
+# pastry-pilot#18: migration files with a version at or below this number were applied before CI
+# automation existed (by Lovable, the SQL editor or MCP), under names and versions that do not
+# match these files. CI never applies them. Newer files are applied by .github/workflows/supabase-deploy.yml
+# and recorded in yeon_ops.migration_ledger. Do not raise this number to skip a pending migration.
+20261116023000

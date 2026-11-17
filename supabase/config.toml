@@ -1,1 +1,28 @@
 project_id = "meswjzwxldhqkjglnmzt"
+
+# 2026-11-17 pastry-pilot#18: per-function JWT settings, so `supabase functions deploy` from CI keeps
+# what is live today (checked with list_edge_functions: every PILOT function runs with verify_jwt
+# off and checks the caller in code). Without these lines the CLI would deploy with verify_jwt on
+# and break the browser/ICS/voice callers. Only PILOT functions are listed; SHCS functions in the
+# same Supabase project (shco-*, sync-order-to-calendar) are deployed from their own repository.
+[functions.extract-order-info]
+verify_jwt = false
+
+[functions.orders-ics]
+verify_jwt = false
+
+[functions.planner-availability]
+verify_jwt = false
+
+[functions.sync-product-lines-to-planner]
+verify_jwt = false
+
+[functions.sync-work-session-to-planner]
+verify_jwt = false
+
+[functions.voice-log-event]
+verify_jwt = false
+
+# New (#17): called from the browser with the signed-in user's JWT.
+[functions.dev-board-github-sync]
+verify_jwt = true
