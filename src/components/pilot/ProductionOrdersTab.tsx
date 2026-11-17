@@ -384,7 +384,6 @@ export function ProductionOrdersTab({ completed = false }: { completed?: boolean
                     key={adding.slot}
                     sessionId={session.id}
                     nextSort={rows.length}
-                    kind="CORE"
                     slot={adding.slot}
                     productId={session.product_id}
                     productSizeId={session.product_size_id}
