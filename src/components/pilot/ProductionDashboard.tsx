@@ -170,7 +170,29 @@ export function ProductionDashboard() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showSessionNotes, setShowSessionNotes] = useState(false);
   // Date-scoped visual partition only; no recipe, merge, or progress data is changed.
-  const [secondMatrixRows, setSecondMatrixRows] = useState<Record<string, string[]>>({});
+  const [secondMatrixRows, setSecondMatrixRows] = useState<Record<string, string[]>>(() => {
+    try {
+      const saved = window.localStorage.getItem("pilot.production.secondMatrixRows.v1");
+      if (!saved) return {};
+      const parsed: unknown = JSON.parse(saved);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+      return Object.fromEntries(
+        Object.entries(parsed).filter(([date, ids]) =>
+          /^\\d{4}-\\d{2}-\\d{2}$/.test(date) &&
+          Array.isArray(ids) && ids.every((id) => typeof id === "string"),
+        ),
+      ) as Record<string, string[]>;
+    } catch {
+      return {};
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("pilot.production.secondMatrixRows.v1", JSON.stringify(secondMatrixRows));
+    } catch {
+      // Storage may be disabled; keep the current in-memory selection usable.
+    }
+  }, [secondMatrixRows]);
   // 타임라인 아래 작업 박스(계량/워크플로 등)가 보여줄 세션 — 블록 선택 또는 대기공간 카드 클릭으로 정해진다.
   const [focusRowId, setFocusRowId] = useState<string | null>(null);
   const [poolOver, setPoolOver] = useState(false);
