@@ -36,7 +36,7 @@ export function ComponentPlanReadout({ row }: { row: WorkSessionFormulaVersionRo
       {sizeText && <strong className="mr-1 font-medium">{sizeText} ·</strong>}V
       {row.formula_versions.version_number}
       {row.slot === "SHEET" && qtyByMould != null && baseMould
-        ? ` (${mouldAbbr(baseMould)} 레시피 ×${fmtNumber(Number(row.multiplier), 4)})`
+        ? ` · 레시피 기준 ${mouldAbbr(baseMould)} ×${fmtNumber(Number(row.multiplier), 4)} (실제 시트 ${mould ? mouldAbbr(mould) : "미지정"})`
         : ` · ×${fmtNumber(Number(row.multiplier), 4)}`}
       {ingredients.isSuccess
         ? ` · 생산 ${fmtNumber(grams)}g`
