@@ -47,7 +47,7 @@ const BLOCK_CONTENT = [
     "permission / RLS change in diff",
   ],
   [
-    /service_role|SERVICE_ROLE_KEY|secrets\.\w+|process\.env\.|import\.meta\.env\./,
+    /service_role|SERVICE_ROLE_KEY|secrets\.\w+|process\.env\.|import\.meta\.env\.|Deno\.env\./,
     "secret or environment access in diff",
   ],
   [/\.rpc\(\s*["'`]|functions\.invoke\(/, "new server call (RPC / edge function) in diff"],
@@ -55,6 +55,12 @@ const BLOCK_CONTENT = [
 
 const MAX_SAFE_FILES = 15;
 const MAX_SAFE_LINES = 400;
+
+/** Reasons found in added lines alone (also used for edge function deploys). */
+export function classifyContent(addedLines) {
+  const text = addedLines.join("\n");
+  return BLOCK_CONTENT.filter(([re]) => re.test(text)).map(([, why]) => why);
+}
 
 /**
  * @param {{ files: string[], addedLines: string[] }} diff
@@ -67,8 +73,7 @@ export function classify({ files, addedLines }) {
     for (const [re, why] of BLOCK_PATHS) if (re.test(f)) reasons.add(`${why}: ${f}`);
     if (!SAFE_PATHS.some((re) => re.test(f))) reasons.add(`not on the safe-path list: ${f}`);
   }
-  const text = addedLines.join("\n");
-  for (const [re, why] of BLOCK_CONTENT) if (re.test(text)) reasons.add(why);
+  for (const why of classifyContent(addedLines)) reasons.add(why);
   if (files.length > MAX_SAFE_FILES)
     reasons.add(`${files.length} files changed (max ${MAX_SAFE_FILES})`);
   if (addedLines.length > MAX_SAFE_LINES)

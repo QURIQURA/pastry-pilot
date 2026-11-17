@@ -147,7 +147,7 @@ create trigger dev_work_items_log_status after insert or update of status on pub
 do $$
 declare
   owner uuid := '53e168e4-72aa-418e-812a-6caaf315a205';
-  board uuid; auto uuid;
+  board uuid; auto uuid; deploy uuid;
 begin
   if not exists (select 1 from auth.users where id = owner) then return; end if;
 
@@ -168,7 +168,17 @@ begin
       'Pilot first in pastry-pilot, then shcs-order and wann-planner.')
     on conflict (user_id, work_key) do nothing;
 
+  insert into public.dev_work_items(user_id, work_key, title, goal, expected_outcome, owning_os,
+      affected_os, status, priority, scope)
+    values (owner, 'YOS-003', 'Auto-Pilot deploy automation (migrations, functions, risk-based merge)',
+      'After one-time setup, only feature requests and important approvals need the owner.',
+      'Migrations and PILOT edge functions deploy from CI; high-risk changes wait for approval; results land on this board.',
+      'SHARED', array['SHCS','PILOT','PLANNER'], 'PR_OPEN', 'P1',
+      'pastry-pilot first; shcs-order and wann-planner after a dry run.')
+    on conflict (user_id, work_key) do nothing;
+
   select id into board from public.dev_work_items where user_id = owner and work_key = 'YOS-001';
+  select id into deploy from public.dev_work_items where user_id = owner and work_key = 'YOS-003';
   select id into auto from public.dev_work_items where user_id = owner and work_key = 'YOS-002';
 
   insert into public.dev_work_refs(user_id, work_item_id, kind, repo, number, url, sync_key)
@@ -176,10 +186,18 @@ begin
       (owner, board, 'ISSUE', 'QURIQURA/pastry-pilot', 17,
         'https://github.com/QURIQURA/pastry-pilot/issues/17', 'github:QURIQURA/pastry-pilot#17'),
       (owner, auto, 'ISSUE', 'QURIQURA/pastry-pilot', 18,
-        'https://github.com/QURIQURA/pastry-pilot/issues/18', 'github:QURIQURA/pastry-pilot#18')
+        'https://github.com/QURIQURA/pastry-pilot/issues/18', 'github:QURIQURA/pastry-pilot#18'),
+      (owner, deploy, 'ISSUE', 'QURIQURA/pastry-pilot', 20,
+        'https://github.com/QURIQURA/pastry-pilot/issues/20', 'github:QURIQURA/pastry-pilot#20'),
+      (owner, board, 'PR', 'QURIQURA/pastry-pilot', 19,
+        'https://github.com/QURIQURA/pastry-pilot/pull/19', 'github:QURIQURA/pastry-pilot#19'),
+      (owner, auto, 'PR', 'QURIQURA/pastry-pilot', 19,
+        'https://github.com/QURIQURA/pastry-pilot/pull/19', 'github:QURIQURA/pastry-pilot#19'),
+      (owner, deploy, 'PR', 'QURIQURA/pastry-pilot', 19,
+        'https://github.com/QURIQURA/pastry-pilot/pull/19', 'github:QURIQURA/pastry-pilot#19')
     on conflict (work_item_id, sync_key) do nothing;
 
   insert into public.dev_work_relations(user_id, from_id, to_id, kind)
-    values (owner, auto, board, 'RELATED')
+    values (owner, auto, board, 'RELATED'), (owner, deploy, auto, 'PART_OF')
     on conflict (from_id, to_id, kind) do nothing;
 end $$;

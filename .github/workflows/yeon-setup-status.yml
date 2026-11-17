@@ -1,0 +1,75 @@
+# pastry-pilot#20 — what one-time setup is done, checked against the real GitHub and Supabase state.
+# Prints only yes/no and HTTP codes, never secret values. Run it from the Actions tab any time;
+# it also runs when this file changes in a PR and every Monday.
+name: YEON OS setup status
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "17 21 * * 0" # Monday 08:17 Sydney (AEDT)
+  pull_request:
+    paths: [".github/workflows/yeon-setup-status.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PROJECT_REF: meswjzwxldhqkjglnmzt
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      DEV_BOARD_INGEST_TOKEN: ${{ secrets.DEV_BOARD_INGEST_TOKEN }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+      AUTOMERGE: ${{ vars.AUTOPILOT_AUTOMERGE }}
+      APP_URL: ${{ vars.APP_URL }}
+    steps:
+      - name: Check setup
+        run: |
+          row() { echo "| $1 | $2 |" >> "$GITHUB_STEP_SUMMARY"; echo "$1: $2"; }
+          has() { [ -n "${!1}" ] && echo "set" || echo "**missing**"; }
+          {
+            echo "### YEON OS setup status ($(date -u +%Y-%m-%dT%H:%MZ))"
+            echo "| Item | State |"
+            echo "| --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$CLAUDE_CODE_OAUTH_TOKEN$ANTHROPIC_API_KEY" ]; then row "Claude credentials (CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY)" set
+          else row "Claude credentials (CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY)" "**missing**"; fi
+          for s in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID VITE_SUPABASE_URL SUPABASE_URL SUPABASE_ACCESS_TOKEN SUPABASE_DB_URL DEV_BOARD_INGEST_TOKEN; do
+            row "Secret $s" "$(has "$s")"
+          done
+          if [ -n "$SUPABASE_ACCESS_TOKEN" ]; then
+            code=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" "https://api.supabase.com/v1/projects/$PROJECT_REF" || echo 000)
+            row "Supabase access token works for $PROJECT_REF" "HTTP $code"
+          fi
+          if [ -n "$SUPABASE_DB_URL" ]; then
+            if psql "$SUPABASE_DB_URL" -XAtqc "select 1" >/dev/null 2>&1; then row "Database connection" ok; else row "Database connection" "**failed**"; fi
+            ledger=$(psql "$SUPABASE_DB_URL" -XAtqc "select count(*) from yeon_ops.migration_ledger" 2>/dev/null || echo "not created yet")
+            row "Migration ledger rows" "$ledger"
+          fi
+          if [ -n "$SUPABASE_URL" ]; then
+            code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${SUPABASE_URL%/}/functions/v1/dev-board-ingest" \
+              -H "Content-Type: application/json" -H "x-yeon-ingest-token: ${DEV_BOARD_INGEST_TOKEN:-none}" --data '{}' || echo 000)
+            # 400 = deployed and token accepted; 401 = token missing or different; 404 = not deployed.
+            row "Dev Board ingest function (400 = ready)" "HTTP $code"
+          fi
+          for env in supabase-auto supabase-production; do
+            r=$(gh api "repos/$GITHUB_REPOSITORY/environments/$env" --jq '[.protection_rules[]? | select(.type == "required_reviewers")] | length' 2>/dev/null || echo "")
+            if [ -z "$r" ]; then row "Environment $env" "**missing**"; else row "Environment $env" "exists, required reviewer rules: $r"; fi
+          done
+          perm=$(gh api "repos/$GITHUB_REPOSITORY/actions/permissions/workflow" --jq '"\(.default_workflow_permissions), can_approve_pull_request_reviews=\(.can_approve_pull_request_reviews)"' 2>/dev/null || echo "unverified (needs admin to read)")
+          row "Actions workflow permissions" "$perm"
+          am=$(gh api "repos/$GITHUB_REPOSITORY" --jq .allow_auto_merge 2>/dev/null || echo unverified)
+          row "Repo allow_auto_merge" "$am"
+          prot=$(gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq .protected 2>/dev/null || echo unverified)
+          row "main branch protected" "$prot"
+          row "Variable AUTOPILOT_AUTOMERGE" "${AUTOMERGE:-unset (auto-merge off)}"
+          row "Variable APP_URL" "${APP_URL:-unset}"

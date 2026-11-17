@@ -78,6 +78,10 @@ jobs:
           elif [[ ",$labels," == *",autopilot:attempt-2,"* ]]; then
             gh issue edit "$ISSUE" -R "$GITHUB_REPOSITORY" --remove-label yeon-auto --add-label autopilot:blocked
             say "Auto-Pilot already tried twice on this issue, so it will not start again. A person needs to take it from here."
+          elif dup=$(gh pr list -R "$GITHUB_REPOSITORY" --state open --search "#$ISSUE in:body" --json number,headRefName \
+                 --jq "[.[] | select(.headRefName != \"autopilot/issue-$ISSUE\")] | .[0].number // empty") && [ -n "$dup" ]; then
+            gh issue edit "$ISSUE" -R "$GITHUB_REPOSITORY" --remove-label yeon-auto
+            say "Auto-Pilot did not start: open PR #$dup already refers to this issue. Close it or finish it there to avoid duplicate work."
           elif [ "$HAS_OAUTH" != "true" ] && [ "$HAS_KEY" != "true" ]; then
             gh issue edit "$ISSUE" -R "$GITHUB_REPOSITORY" --remove-label yeon-auto --add-label autopilot:blocked
             say "Auto-Pilot is not set up yet: the repository owner needs to add the secret \`CLAUDE_CODE_OAUTH_TOKEN\` (or \`ANTHROPIC_API_KEY\`). See docs/YEON_OS_AUTOPILOT.md. Re-add the \`yeon-auto\` label afterwards."
@@ -103,12 +107,18 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       ISSUE: ${{ github.event.issue.number }}
+      ISSUE_TITLE: ${{ github.event.issue.title }}
       BRANCH: autopilot/issue-${{ github.event.issue.number }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      DEV_BOARD_INGEST_TOKEN: ${{ secrets.DEV_BOARD_INGEST_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
+
+      - name: Record start on the Dev Board
+        run: bash scripts/dev-board-report.sh "$ISSUE" IMPLEMENTING "Auto-Pilot attempt ${{ needs.gate.outputs.attempt }} started."
 
       - name: Prepare branch and context
         run: |
@@ -155,8 +165,10 @@ jobs:
             - Keep the change small. Preserve existing behaviour. Respect OS ownership
               (SHCS = customer experience/orders, PILOT = operations/production, Planner = family/time).
             - Never edit .github/, never touch live databases or deploy. You have no credentials for them.
-              If the issue needs a database change, add a migration file under supabase/migrations/ plus
-              a rollback file under supabase/rollback/, and say in the PR body that a person must run it.
+              If the issue needs a database change, add a new migration file under supabase/migrations/
+              (never edit an existing one) plus a rollback file under supabase/rollback/. After merge,
+              .github/workflows/supabase-deploy.yml applies it; RLS, privilege, delete/drop and auth
+              changes wait for the owner's approval there. Say which applies in the PR body.
             - Never write secrets, tokens, customer PII or family schedules into code, commits or the PR.
             - Run `bun run build`, `node scripts/ci-tests.mjs` and `bash scripts/lint-changed.sh origin/main`.
               Report what actually ran and the real results. Never claim deployed or verified.
@@ -237,6 +249,7 @@ jobs:
           fi
           if [ "$(git rev-list --count "$BASE"..HEAD)" = "0" ]; then
             gh issue edit "$ISSUE" -R "$GITHUB_REPOSITORY" --remove-label autopilot:running --add-label autopilot:blocked
+            bash scripts/dev-board-report.sh "$ISSUE" BLOCKED "Auto-Pilot made no change; needs a person."
             say "Auto-Pilot made no change. $( [ -s "$RUNNER_TEMP/pr-body.md" ] && cat "$RUNNER_TEMP/pr-body.md" )"
             echo "opened=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
@@ -271,6 +284,7 @@ jobs:
           gh issue edit "$ISSUE" -R "$GITHUB_REPOSITORY" --remove-label autopilot:running \
             --add-label "$( [ "$result" = passed ] && echo autopilot:pr-open || echo autopilot:checks-failed )"
           say "Auto-Pilot opened draft PR #$n (checks $result). It is not merged or deployed."
+          bash scripts/dev-board-report.sh "$ISSUE" "$( [ "$result" = passed ] && echo PR_OPEN || echo FAILED )" "Draft PR #$n opened; workflow checks $result." "$n"
           echo "opened=true" >> "$GITHUB_OUTPUT"
           # Pushes made with GITHUB_TOKEN do not start pull_request workflows; start PR checks explicitly.
           gh workflow run pr-checks.yml --ref "$BRANCH" -f branch="$BRANCH" || true
@@ -282,6 +296,7 @@ jobs:
             "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" > "$RUNNER_TEMP/f.md"
           gh issue comment "$ISSUE" -R "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/f.md"
           gh issue edit "$ISSUE" -R "$GITHUB_REPOSITORY" --remove-label autopilot:running --add-label autopilot:failed
+          bash scripts/dev-board-report.sh "$ISSUE" FAILED "Auto-Pilot run failed before a PR was opened."
 
       - name: Clear running label if cancelled
         if: cancelled()

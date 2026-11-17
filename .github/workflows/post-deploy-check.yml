@@ -1,0 +1,58 @@
+# pastry-pilot#20 YEON OS Auto-Pilot — after the app deploy finishes, check the live address answers
+# and record the result on the Dev Board. This proves "deployed and reachable" only; it never marks
+# work Verified (that needs a person's runtime evidence).
+name: Post-deploy check
+
+on:
+  workflow_run:
+    workflows: ["Deploy to Cloudflare Workers"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      APP_URL: ${{ vars.APP_URL }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      DEV_BOARD_INGEST_TOKEN: ${{ secrets.DEV_BOARD_INGEST_TOKEN }}
+      SHA: ${{ github.event.workflow_run.head_sha }}
+      CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: issue
+        run: |
+          body=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/pulls" --jq '.[0].body // ""' 2>/dev/null || true)
+          n=$(printf '%s' "$body" | grep -oiE '(closes|fixes|resolves) #[0-9]+' | head -1 | grep -oE '[0-9]+' || true)
+          echo "number=$n" >> "$GITHUB_OUTPUT"
+      - name: Smoke check
+        run: |
+          if [ "$CONCLUSION" != "success" ]; then
+            echo "Deploy finished with $CONCLUSION." | tee -a "$GITHUB_STEP_SUMMARY"
+            bash scripts/dev-board-report.sh "${{ steps.issue.outputs.number }}" FAILED "App deploy $CONCLUSION for ${SHA:0:7}."
+            exit 1
+          fi
+          if [ -z "$APP_URL" ]; then
+            echo "Deployed ${SHA:0:7}. No APP_URL variable set, so the live address was not checked." | tee -a "$GITHUB_STEP_SUMMARY"
+            bash scripts/dev-board-report.sh "${{ steps.issue.outputs.number }}" DEPLOYED "App deployed (${SHA:0:7}); live address not checked. Not verified."
+            exit 0
+          fi
+          ok=false
+          for i in 1 2 3; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$APP_URL" || echo 000)
+            echo "Attempt $i: HTTP $code"
+            if [ "$code" -ge 200 ] && [ "$code" -lt 400 ]; then ok=true; break; fi
+            sleep 15
+          done
+          if [ "$ok" = true ]; then
+            echo "Deployed ${SHA:0:7}; $APP_URL answers (HTTP $code)." >> "$GITHUB_STEP_SUMMARY"
+            bash scripts/dev-board-report.sh "${{ steps.issue.outputs.number }}" DEPLOYED "App deployed (${SHA:0:7}); live address answers HTTP $code. Not verified."
+          else
+            echo "Deployed ${SHA:0:7} but $APP_URL did not answer (HTTP $code)." >> "$GITHUB_STEP_SUMMARY"
+            bash scripts/dev-board-report.sh "${{ steps.issue.outputs.number }}" FAILED "App deployed (${SHA:0:7}) but live address did not answer (HTTP $code)."
+            exit 1
+          fi

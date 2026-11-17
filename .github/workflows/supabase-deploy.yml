@@ -1,0 +1,183 @@
+# pastry-pilot#18 / #20 YEON OS Auto-Pilot — apply PILOT migrations and deploy PILOT edge functions.
+#
+# Runs after code reaches main (push or an Auto-Pilot merge). Low-risk changes go through the
+# `supabase-auto` environment straight away. High-risk changes (RLS, privileges, deletes, drops,
+# auth, SECURITY DEFINER, new or secret-touching functions, SHCS objects) wait in the
+# `supabase-production` environment until the owner approves the run in GitHub. If that environment
+# has no required reviewer, high-risk changes are refused instead of running unprotected.
+# Migrations: scripts/supabase-migrate.mjs (dry run, then one transaction per file, ledger in
+# yeon_ops.migration_ledger, stops at the first failure). Functions: only those in config.toml.
+name: Supabase deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**"
+      - "supabase/functions/**"
+      - "supabase/config.toml"
+      - "supabase/automation-baseline.txt"
+  workflow_dispatch:
+    inputs:
+      functions:
+        description: "Edge functions: changed, all, or names separated by spaces"
+        default: changed
+      then_deploy_app:
+        description: "Start the app deploy afterwards (used after Auto-Pilot merges)"
+        type: boolean
+        default: false
+      issue:
+        description: "Issue number to report on the Dev Board (optional)"
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supabase-deploy
+  cancel-in-progress: false
+
+env:
+  PROJECT_REF: meswjzwxldhqkjglnmzt
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      configured: ${{ steps.cfg.outputs.configured }}
+      work: ${{ steps.decide.outputs.work }}
+      environment: ${{ steps.decide.outputs.environment }}
+      functions: ${{ steps.fn.outputs.names }}
+      issue: ${{ steps.issue.outputs.number }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      HAS_DB: ${{ secrets.SUPABASE_DB_URL != '' }}
+      HAS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: cfg
+        run: |
+          if [ "$HAS_DB" = "true" ] && [ "$HAS_TOKEN" = "true" ]; then echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "### Supabase deploy skipped: secrets SUPABASE_DB_URL and SUPABASE_ACCESS_TOKEN are needed (see docs/YEON_OS_AUTOPILOT.md)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - id: issue
+        run: |
+          n="${{ inputs.issue }}"
+          if [ -z "$n" ]; then
+            body=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq '.[0].body // ""' 2>/dev/null || true)
+            n=$(printf '%s' "$body" | grep -oiE '(closes|fixes|resolves) #[0-9]+' | head -1 | grep -oE '[0-9]+' || true)
+          fi
+          echo "number=$n" >> "$GITHUB_OUTPUT"
+
+      - id: mig
+        if: steps.cfg.outputs.configured == 'true'
+        run: node scripts/supabase-migrate.mjs plan
+
+      - id: fn
+        if: steps.cfg.outputs.configured == 'true'
+        run: node scripts/supabase-functions-plan.mjs "${{ github.event.before || '-' }}" "$GITHUB_SHA" "${{ inputs.functions || 'changed' }}"
+
+      - id: decide
+        if: steps.cfg.outputs.configured == 'true'
+        env:
+          MIG_RISK: ${{ steps.mig.outputs.risk }}
+          FN_RISK: ${{ steps.fn.outputs.risk }}
+          MIG_SUMMARY: ${{ steps.mig.outputs.summary }}
+          FN_SUMMARY: ${{ steps.fn.outputs.summary }}
+        run: |
+          {
+            echo "### Supabase deploy plan"
+            echo "**Migrations ($MIG_RISK)**"; printf '%s\n' "$MIG_SUMMARY"
+            echo "**Edge functions ($FN_RISK)**"; printf '%s\n' "$FN_SUMMARY"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$MIG_RISK" = "none" ] && [ "$FN_RISK" = "none" ]; then echo "work=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          echo "work=true" >> "$GITHUB_OUTPUT"
+          if [ "$MIG_RISK" = "high" ] || [ "$FN_RISK" = "high" ]; then
+            reviewers=$(gh api "repos/$GITHUB_REPOSITORY/environments/supabase-production" \
+              --jq '[.protection_rules[]? | select(.type == "required_reviewers")] | length' 2>/dev/null || echo 0)
+            if [ "${reviewers:-0}" = "0" ]; then
+              echo "High-risk change, but environment supabase-production has no required reviewer. Refusing to run it unprotected." | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+            echo "environment=supabase-production" >> "$GITHUB_OUTPUT"
+            echo "**Waiting for owner approval** in environment supabase-production." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "environment=supabase-auto" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report blocked plan to the Dev Board
+        if: failure()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          DEV_BOARD_INGEST_TOKEN: ${{ secrets.DEV_BOARD_INGEST_TOKEN }}
+        run: |
+          bash scripts/dev-board-report.sh "${{ steps.issue.outputs.number }}" BLOCKED "Supabase deploy refused - high-risk change needs the supabase-production environment with a required reviewer."
+
+  apply:
+    needs: plan
+    if: needs.plan.outputs.configured == 'true' && needs.plan.outputs.work == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: ${{ needs.plan.outputs.environment }}
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      DEV_BOARD_INGEST_TOKEN: ${{ secrets.DEV_BOARD_INGEST_TOKEN }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      ISSUE: ${{ needs.plan.outputs.issue }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Apply migrations (dry run first, stop at first failure)
+        run: node scripts/supabase-migrate.mjs apply
+
+      - name: Deploy edge functions
+        if: needs.plan.outputs.functions != ''
+        run: |
+          for f in ${{ needs.plan.outputs.functions }}; do
+            echo "Deploying $f"
+            supabase functions deploy "$f" --project-ref "$PROJECT_REF" --use-api
+          done
+
+      - name: Report success
+        if: success()
+        run: |
+          bash scripts/dev-board-report.sh "$ISSUE" - "Supabase deploy done (migrations + functions ${{ needs.plan.outputs.functions || 'none' }}). Not verified at runtime."
+
+      - name: Report failure and recovery steps
+        if: failure()
+        run: |
+          {
+            echo "### Supabase deploy failed"
+            echo "- A failed migration file is rolled back as a whole; files applied before it in this run stay applied (see yeon_ops.migration_ledger)."
+            echo "- To undo an applied migration, run its file from supabase/rollback/ after review."
+            echo "- A failed function deploy leaves the previous function version active."
+          } >> "$GITHUB_STEP_SUMMARY"
+          bash scripts/dev-board-report.sh "$ISSUE" FAILED "Supabase deploy failed; see run for recovery steps."
+
+  app:
+    needs: [plan, apply]
+    if: >-
+      always() && inputs.then_deploy_app &&
+      needs.plan.result == 'success' && (needs.apply.result == 'success' || needs.apply.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      # Database first, then the app (pushes made with GITHUB_TOKEN do not start deploy.yml).
+      - run: gh workflow run deploy.yml --ref main -R "$GITHUB_REPOSITORY"
