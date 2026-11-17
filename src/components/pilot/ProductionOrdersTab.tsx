@@ -207,7 +207,7 @@ export function ProductionOrdersTab({ completed = false }: { completed?: boolean
           {(createSession.error as Error).message}
         </p>
       )}
-      <div className="grid gap-3 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3">
         {list.map(({ order, rows, session, ambiguousSession }) =>
           order.order_kind === "POPUP" ? (
             <PopupProductionCard key={order.id} order={order} />
