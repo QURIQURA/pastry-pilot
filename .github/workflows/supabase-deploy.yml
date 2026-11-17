@@ -151,7 +151,7 @@ jobs:
         run: |
           for f in ${{ needs.plan.outputs.functions }}; do
             echo "Deploying $f"
-            supabase functions deploy "$f" --project-ref "$PROJECT_REF" --use-api
+            supabase functions deploy "$f" --remote="$PROJECT_REF" --use-api --yes
           done
 
       - name: Report success
