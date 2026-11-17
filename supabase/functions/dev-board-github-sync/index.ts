@@ -1,3 +1,4 @@
+// Redeploy after CI confirmation fix (2026-11-17); no runtime behavior change.
 // YEON OS Development Board (pastry-pilot#17) — read-only GitHub issue/PR snapshot.
 //
 // Browser (signed-in user JWT) → this function → GitHub REST API (GET only) → the caller's own
