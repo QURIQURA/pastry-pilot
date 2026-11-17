@@ -605,7 +605,7 @@ export function AddFormulaVersionForm({
   sessionId,
   nextSort,
   onDone,
-  kind = "DECORATIVE",
+  kind = "CORE",
   slot = null,
   productId = null,
   productSizeId = null,
@@ -716,7 +716,7 @@ export function AddFormulaVersionForm({
       onDone(createdId);
       // 2026-10-21: CORE(SHEET/CREAM/FILLING)를 새로 추가하면 Planner에도 TASK가 생겨야 한다 —
       // 예전에는 일정을 저장할 때만 동기화돼서, 일정을 먼저 잡고 나중에 추가한 CREAM 등은 누락됐다.
-      if (kind === "CORE") await syncWorkSessionToPlanner(sessionId);
+      await syncWorkSessionToPlanner(sessionId);
     },
   });
 
