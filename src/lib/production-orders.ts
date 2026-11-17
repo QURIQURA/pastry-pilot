@@ -21,12 +21,16 @@ export function buildProductionOrderCards<
         ambiguousSession: linked.length > 1,
       };
     })
-    .sort((a, b) =>
-      completed
-        ? (b.order.pickup_at ?? b.order.event_date ?? "").localeCompare(
-            a.order.pickup_at ?? a.order.event_date ?? "",
-          )
-        : Number(a.rows.length > 0) - Number(b.rows.length > 0) ||
-          a.order.order_number.localeCompare(b.order.order_number),
-    );
+    .sort((a, b) => {
+      const dateA = a.order.pickup_at ?? a.order.event_date;
+      const dateB = b.order.pickup_at ?? b.order.event_date;
+      // Production progress must never reorder cards. Sort by delivery/pickup only.
+      // Unscheduled orders come last; completed history stays newest first.
+      if (!dateA && dateB) return 1;
+      if (dateA && !dateB) return -1;
+      const byDate = (dateA ?? "").localeCompare(dateB ?? "");
+      if (byDate !== 0) return completed ? -byDate : byDate;
+      return a.order.order_number.localeCompare(b.order.order_number) ||
+        a.order.id.localeCompare(b.order.id);
+    });
 }
