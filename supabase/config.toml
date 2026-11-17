@@ -26,7 +26,3 @@ verify_jwt = false
 # New (#17): called from the browser with the signed-in user's JWT.
 [functions.dev-board-github-sync]
 verify_jwt = true
-
-# New (#18): called from GitHub Actions with DEV_BOARD_INGEST_TOKEN, not a user JWT.
-[functions.dev-board-ingest]
-verify_jwt = false

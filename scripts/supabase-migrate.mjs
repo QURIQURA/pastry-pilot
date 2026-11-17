@@ -11,7 +11,8 @@
 // in its own transaction together with its ledger row. The first failure stops everything; the
 // failed file leaves no partial change. An already-applied file whose content changed is an error.
 //
-// Usage: SUPABASE_DB_URL=... node scripts/supabase-migrate.mjs plan|apply [--json]
+// Usage: SUPABASE_ACCESS_TOKEN=... node scripts/supabase-migrate.mjs plan|check|apply
+//        (or SUPABASE_DB_URL=... for psql; check = plan + rolled-back dry run)
 //        node scripts/supabase-migrate.mjs risk <file...>   (no database needed)
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -81,20 +82,61 @@ export function planMigrations({ files, baseline, remoteVersions, ledger }) {
 
 const sha = (s) => createHash("sha256").update(s).digest("hex");
 
-function psql(sqlText, { capture = false } = {}) {
+/**
+ * Two ways to reach the database, both run the whole text as one multi-statement request:
+ * - Supabase Management API (default in CI): only needs SUPABASE_ACCESS_TOKEN, which is already a
+ *   repository secret. POST /v1/projects/{ref}/database/query.
+ * - psql with SUPABASE_DB_URL (optional, also used by the local tests).
+ * Errors never include the token or the connection string.
+ */
+const PROJECT_REF = process.env.SUPABASE_PROJECT_ID || "meswjzwxldhqkjglnmzt";
+
+export async function exec(sqlText) {
   const url = process.env.SUPABASE_DB_URL;
-  if (!url) throw new Error("SUPABASE_DB_URL is not set");
-  const file = join(tmpdir(), `yeon-${process.pid}-${Date.now()}.sql`);
-  writeFileSync(file, sqlText);
-  const r = spawnSync("psql", [url, "-X", "-q", "-v", "ON_ERROR_STOP=1", "-At", "-f", file], {
-    encoding: "utf8",
+  if (url) {
+    const file = join(tmpdir(), `yeon-${process.pid}-${Date.now()}.sql`);
+    writeFileSync(file, sqlText);
+    const r = spawnSync("psql", [url, "-X", "-q", "-v", "ON_ERROR_STOP=1", "-At", "-f", file], {
+      encoding: "utf8",
+    });
+    if (r.status !== 0) throw new Error((r.stderr || r.stdout || "psql failed").trim());
+    return r.stdout;
+  }
+  const token = process.env.SUPABASE_ACCESS_TOKEN;
+  if (!token) throw new Error("Set SUPABASE_ACCESS_TOKEN (or SUPABASE_DB_URL)");
+  const res = await fetch(`https://api.supabase.com/v1/projects/${PROJECT_REF}/database/query`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ query: sqlText }),
   });
-  // Never echo the connection string; psql errors do not contain the password.
-  if (r.status !== 0) throw new Error((r.stderr || r.stdout || "psql failed").trim());
-  return capture ? r.stdout : "";
+  const text = await res.text();
+  if (!res.ok) {
+    let msg = text;
+    try {
+      msg = JSON.parse(text).message ?? text;
+    } catch {
+      /* keep text */
+    }
+    throw new Error(`Management API HTTP ${res.status}: ${String(msg).slice(0, 500)}`);
+  }
+  return text;
 }
 
-const LEDGER_DDL = `
+/** Runs a query that returns one json column named j in one row, and parses it. */
+async function queryJson(selectJ) {
+  const out = await exec(selectJ);
+  if (process.env.SUPABASE_DB_URL) return JSON.parse(out.trim().split("\n").pop());
+  const rows = JSON.parse(out);
+  const v = rows?.[0]?.j;
+  return typeof v === "string" ? JSON.parse(v) : v;
+}
+
+// One lock for every repository that applies migrations to this shared database (PILOT now, SHCS
+// later), so two runs can never interleave.
+const LOCK = "select pg_advisory_xact_lock(hashtext('yeon_ops.migrations'));";
+
+const LEDGER_DDL = `begin;
+${LOCK}
 create schema if not exists yeon_ops;
 revoke all on schema yeon_ops from public, anon, authenticated;
 create table if not exists yeon_ops.migration_ledger (
@@ -104,9 +146,11 @@ create table if not exists yeon_ops.migration_ledger (
   applied_at timestamptz not null default now(),
   run_url text,
   primary key (repo, filename)
-);`;
+);
+revoke all on yeon_ops.migration_ledger from public, anon, authenticated;
+commit;`;
 
-function loadState() {
+async function loadState() {
   const files = readdirSync(DIR)
     .filter((n) => n.endsWith(".sql"))
     .map((name) => {
@@ -114,54 +158,54 @@ function loadState() {
       return { name, sql, sha256: sha(sql) };
     });
   const baseline = readBaseline(readFileSync("supabase/automation-baseline.txt", "utf8"));
-  const remote = psql("select version from supabase_migrations.schema_migrations;", {
-    capture: true,
-  });
-  const hasLedger =
-    psql("select to_regclass('yeon_ops.migration_ledger') is not null;", {
-      capture: true,
-    }).trim() === "t";
-  const ledgerRows = hasLedger
-    ? psql(
-        `select filename || ' ' || sha256 from yeon_ops.migration_ledger where repo = '${REPO}';`,
-        {
-          capture: true,
-        },
-      )
-    : "";
-  const ledger = new Map(
-    ledgerRows
-      .split("\n")
-      .filter(Boolean)
-      .map((l) => l.split(" ")),
+  const versions = await queryJson(
+    "select coalesce(json_agg(version), '[]'::json) as j from supabase_migrations.schema_migrations;",
   );
-  return { files, baseline, remoteVersions: new Set(remote.split("\n").filter(Boolean)), ledger };
+  const hasLedger = await queryJson(
+    "select to_json(to_regclass('yeon_ops.migration_ledger') is not null) as j;",
+  );
+  const rows = hasLedger
+    ? await queryJson(
+        `select coalesce(json_agg(json_build_array(filename, sha256)), '[]'::json) as j from yeon_ops.migration_ledger where repo = '${REPO}';`,
+      )
+    : [];
+  return {
+    files,
+    baseline,
+    remoteVersions: new Set(versions),
+    ledger: new Map(rows),
+    hasLedger,
+  };
 }
 
-const quote = (s) => `'${String(s).replace(/'/g, "''")}'`;
+export const quote = (s) => `'${String(s).replace(/'/g, "''")}'`;
 
 function output(key, value) {
   if (process.env.GITHUB_OUTPUT)
     appendFileSync(process.env.GITHUB_OUTPUT, `${key}<<EOF_OUT\n${value}\nEOF_OUT\n`);
 }
 
-function main() {
+async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   if (cmd === "risk") {
     for (const f of rest) console.log(f, JSON.stringify(classifySql(readFileSync(f, "utf8"))));
     return;
   }
-  if (cmd !== "plan" && cmd !== "apply") {
-    console.error("usage: supabase-migrate.mjs plan|apply | risk <file...>");
+  if (!["plan", "check", "apply"].includes(cmd)) {
+    console.error("usage: supabase-migrate.mjs plan|check|apply | risk <file...>");
     process.exit(2);
   }
-  const { pending, drift } = planMigrations(loadState());
+  const state = await loadState();
+  const { pending, drift } = planMigrations(state);
   const risk = pending.some((p) => p.risk === "high") ? "high" : pending.length ? "low" : "none";
   const summary = pending.length
     ? pending
         .map((p) => `- ${p.name}: ${p.risk}${p.reasons.length ? ` (${p.reasons.join(", ")})` : ""}`)
         .join("\n")
     : "- no pending migrations";
+  console.log(
+    `Connected to ${process.env.SUPABASE_DB_URL ? "database from SUPABASE_DB_URL" : PROJECT_REF}: ${state.remoteVersions.size} versions in schema_migrations, ledger ${state.hasLedger ? `has ${state.ledger.size} PILOT rows` : "not created yet"}.`,
+  );
   console.log(`Migration risk: ${risk}\n${summary}`);
   output("risk", risk);
   output("summary", summary);
@@ -171,28 +215,29 @@ function main() {
     );
     process.exit(1);
   }
-  if (cmd === "plan") return;
+  if (cmd === "plan" || pending.length === 0) return;
 
-  if (pending.length === 0) return;
-  psql(LEDGER_DDL);
+  // Dry run every pending file together, then roll back: nothing changes if any one fails.
+  // `check` stops here (used on PRs); `apply` continues.
+  await exec(`begin;\n${LOCK}\n${pending.map((p) => p.sql).join("\n;\n")}\n;\nrollback;`);
+  console.log("Dry run passed (rolled back, no change).");
+  if (cmd === "check") return;
+
+  await exec(LEDGER_DDL);
   const runUrl = process.env.RUN_URL ?? "";
-  // 1) Dry run every pending file together, rolled back, so nothing is applied if any one fails.
-  psql(`begin;\n${pending.map((p) => p.sql).join("\n;\n")}\n;\nrollback;`);
-  console.log("Dry run passed (rolled back).");
-  // 2) Apply one by one, each with its ledger row in the same transaction.
+  // Apply one by one, each with its ledger row in the same transaction. The ledger primary key
+  // also stops a second run from applying the same file twice.
   for (const p of pending) {
-    psql(
-      `begin;\n${p.sql}\n;\ninsert into yeon_ops.migration_ledger(repo, filename, sha256, run_url) values (${quote(REPO)}, ${quote(p.name)}, ${quote(p.sha256)}, ${quote(runUrl)});\ncommit;`,
+    await exec(
+      `begin;\n${LOCK}\n${p.sql}\n;\ninsert into yeon_ops.migration_ledger(repo, filename, sha256, run_url) values (${quote(REPO)}, ${quote(p.name)}, ${quote(p.sha256)}, ${quote(runUrl)});\ncommit;`,
     );
     console.log(`Applied ${p.name}`);
   }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  try {
-    main();
-  } catch (e) {
+  main().catch((e) => {
     console.error(`Stopped: ${e.message}`);
     process.exit(1);
-  }
+  });
 }

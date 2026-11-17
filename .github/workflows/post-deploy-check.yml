@@ -17,13 +17,17 @@ jobs:
     timeout-minutes: 5
     env:
       GH_TOKEN: ${{ github.token }}
-      APP_URL: ${{ vars.APP_URL }}
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      DEV_BOARD_INGEST_TOKEN: ${{ secrets.DEV_BOARD_INGEST_TOKEN }}
+      # The Worker address deploy.yml publishes to (--name quriqura-kora-pilot). A repository
+      # variable APP_URL overrides it if the address ever changes.
+      APP_URL: ${{ vars.APP_URL || 'https://quriqura-kora-pilot.oompaya.workers.dev/' }}
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
       SHA: ${{ github.event.workflow_run.head_sha }}
       CONCLUSION: ${{ github.event.workflow_run.conclusion }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - id: issue
         run: |
           body=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/pulls" --jq '.[0].body // ""' 2>/dev/null || true)

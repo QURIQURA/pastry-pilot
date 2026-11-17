@@ -1,10 +1,13 @@
 # pastry-pilot#18 / #20 YEON OS Auto-Pilot — apply PILOT migrations and deploy PILOT edge functions.
 #
 # Runs after code reaches main (push or an Auto-Pilot merge). Low-risk changes go through the
-# `supabase-auto` environment straight away. High-risk changes (RLS, privileges, deletes, drops,
-# auth, SECURITY DEFINER, new or secret-touching functions, SHCS objects) wait in the
-# `supabase-production` environment until the owner approves the run in GitHub. If that environment
-# has no required reviewer, high-risk changes are refused instead of running unprotected.
+# `supabase-auto` environment straight away (GitHub creates it on first use, no rules needed).
+# High-risk changes (RLS, privileges, deletes, drops, auth, SECURITY DEFINER, triggers, new or
+# secret-touching functions, SHCS objects) wait in the `production` environment until the owner
+# approves the run in GitHub. If `production` has no required reviewer, high-risk changes are
+# refused instead of running unprotected.
+# Credentials: only the existing SUPABASE_ACCESS_TOKEN (+ SUPABASE_PROJECT_ID). SQL goes through the
+# Supabase Management API, so no database password secret is needed.
 # Migrations: scripts/supabase-migrate.mjs (dry run, then one transaction per file, ledger in
 # yeon_ops.migration_ledger, stops at the first failure). Functions: only those in config.toml.
 name: Supabase deploy
@@ -52,8 +55,8 @@ jobs:
       issue: ${{ steps.issue.outputs.number }}
     env:
       GH_TOKEN: ${{ github.token }}
-      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-      HAS_DB: ${{ secrets.SUPABASE_DB_URL != '' }}
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
       HAS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
@@ -62,11 +65,15 @@ jobs:
 
       - id: cfg
         run: |
-          if [ "$HAS_DB" = "true" ] && [ "$HAS_TOKEN" = "true" ]; then echo "configured=true" >> "$GITHUB_OUTPUT"
-          else
+          if [ "$HAS_TOKEN" != "true" ]; then
             echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "### Supabase deploy skipped: secrets SUPABASE_DB_URL and SUPABASE_ACCESS_TOKEN are needed (see docs/YEON_OS_AUTOPILOT.md)." >> "$GITHUB_STEP_SUMMARY"
-          fi
+            echo "### Supabase deploy skipped: secret SUPABASE_ACCESS_TOKEN is missing (see docs/YEON_OS_AUTOPILOT.md)." >> "$GITHUB_STEP_SUMMARY"
+          elif [ -n "$SUPABASE_PROJECT_ID" ] && [ "$SUPABASE_PROJECT_ID" != "$PROJECT_REF" ]; then
+            # This repo's database is the shared Business project; refuse to deploy anywhere else.
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "### Supabase deploy stopped: secret SUPABASE_PROJECT_ID is not the PILOT/SHCS project." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          else echo "configured=true" >> "$GITHUB_OUTPUT"; fi
 
       - id: issue
         run: |
@@ -102,25 +109,22 @@ jobs:
           echo "work=true" >> "$GITHUB_OUTPUT"
           if [ "$MIG_RISK" = "high" ] || [ "$FN_RISK" = "high" ]; then
             # gh prints the error body on stdout when the call fails, so only trust output on success.
-            if reviewers=$(gh api "repos/$GITHUB_REPOSITORY/environments/supabase-production" \
+            if reviewers=$(gh api "repos/$GITHUB_REPOSITORY/environments/production" \
                  --jq '[.protection_rules[]? | select(.type == "required_reviewers")] | length' 2>/dev/null); then :; else reviewers=0; fi
             if ! [[ "$reviewers" =~ ^[1-9][0-9]*$ ]]; then
-              echo "High-risk change, but environment supabase-production has no required reviewer. Refusing to run it unprotected." | tee -a "$GITHUB_STEP_SUMMARY"
+              echo "High-risk change, but environment production has no required reviewer. Refusing to run it unprotected." | tee -a "$GITHUB_STEP_SUMMARY"
               exit 1
             fi
-            echo "environment=supabase-production" >> "$GITHUB_OUTPUT"
-            echo "**Waiting for owner approval** in environment supabase-production." >> "$GITHUB_STEP_SUMMARY"
+            echo "environment=production" >> "$GITHUB_OUTPUT"
+            echo "**Waiting for owner approval** in environment production." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "environment=supabase-auto" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Report blocked plan to the Dev Board
         if: failure()
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          DEV_BOARD_INGEST_TOKEN: ${{ secrets.DEV_BOARD_INGEST_TOKEN }}
         run: |
-          bash scripts/dev-board-report.sh "${{ steps.issue.outputs.number }}" BLOCKED "Supabase deploy refused - high-risk change needs the supabase-production environment with a required reviewer."
+          bash scripts/dev-board-report.sh "${{ steps.issue.outputs.number }}" BLOCKED "Supabase deploy refused - high-risk change needs the production environment with a required reviewer."
 
   apply:
     needs: plan
@@ -129,10 +133,8 @@ jobs:
     timeout-minutes: 20
     environment: ${{ needs.plan.outputs.environment }}
     env:
-      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      DEV_BOARD_INGEST_TOKEN: ${{ secrets.DEV_BOARD_INGEST_TOKEN }}
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       ISSUE: ${{ needs.plan.outputs.issue }}
     steps:

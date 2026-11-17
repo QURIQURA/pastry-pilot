@@ -6,7 +6,7 @@
 set -euo pipefail
 base="${1:?usage: lint-changed.sh <base-sha>}"
 skip='^(src/routeTree\.gen\.ts|src/integrations/supabase/types\.ts)$'
-pick() { git diff --name-only --diff-filter="$1" "$base" HEAD -- '*.ts' '*.tsx' '*.mjs' '*.js' | grep -Ev "$skip" || true; }
+pick() { git diff --name-only --diff-filter="$1" "$base" HEAD -- '*.ts' '*.tsx' '*.mjs' '*.js' | grep -Ev "$skip" | while read -r f; do [ -f "$f" ] && echo "$f"; done || true; }
 added=$(pick A)
 modified=$(pick MR)
 status=0

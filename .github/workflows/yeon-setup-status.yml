@@ -1,6 +1,7 @@
-# pastry-pilot#20 — what one-time setup is done, checked against the real GitHub and Supabase state.
-# Prints only yes/no and HTTP codes, never secret values. Run it from the Actions tab any time;
-# it also runs when this file changes in a PR and every Monday.
+# pastry-pilot#20 — which one-time setup is done, checked against the real GitHub and Supabase state.
+# Prints only set/missing, HTTP codes and non-secret settings, never secret values. Run it from the
+# Actions tab any time. It also runs every Monday and when this file changes in a PR (never on
+# Auto-Pilot branches, because it holds the Supabase token).
 name: YEON OS setup status
 
 on:
@@ -15,61 +16,75 @@ permissions:
 
 jobs:
   status:
+    if: ${{ !startsWith(github.head_ref, 'autopilot/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
       GH_TOKEN: ${{ github.token }}
-      PROJECT_REF: meswjzwxldhqkjglnmzt
+      EXPECTED_REF: meswjzwxldhqkjglnmzt
+      APP_URL: ${{ vars.APP_URL || 'https://quriqura-kora-pilot.oompaya.workers.dev/' }}
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      DEV_BOARD_INGEST_TOKEN: ${{ secrets.DEV_BOARD_INGEST_TOKEN }}
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
       AUTOMERGE: ${{ vars.AUTOPILOT_AUTOMERGE }}
-      APP_URL: ${{ vars.APP_URL }}
     steps:
+      - uses: actions/checkout@v4
       - name: Check setup
         run: |
           row() { echo "| $1 | $2 |" >> "$GITHUB_STEP_SUMMARY"; echo "$1: $2"; }
           has() { [ -n "${!1}" ] && echo "set" || echo "**missing**"; }
+          # gh prints the error body on stdout when a call fails, so use output only on success.
+          get() { local out; if out=$(gh api "$1" --jq "$2" 2>/dev/null) && [ -n "$out" ] && [ "$out" != "null" ]; then echo "$out"; else echo ""; fi; }
           {
             echo "### YEON OS setup status ($(date -u +%Y-%m-%dT%H:%MZ))"
             echo "| Item | State |"
             echo "| --- | --- |"
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ -n "$CLAUDE_CODE_OAUTH_TOKEN$ANTHROPIC_API_KEY" ]; then row "Claude credentials (CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY)" set
-          else row "Claude credentials (CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY)" "**missing**"; fi
-          for s in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID VITE_SUPABASE_URL SUPABASE_URL SUPABASE_ACCESS_TOKEN SUPABASE_DB_URL DEV_BOARD_INGEST_TOKEN; do
+
+          if [ -n "$CLAUDE_CODE_OAUTH_TOKEN$ANTHROPIC_API_KEY" ]; then row "Claude credentials" set; else row "Claude credentials" "**missing**"; fi
+          for s in SUPABASE_ACCESS_TOKEN SUPABASE_PROJECT_ID CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID VITE_SUPABASE_URL VITE_SUPABASE_PUBLISHABLE_KEY; do
             row "Secret $s" "$(has "$s")"
           done
+          if [ -n "$SUPABASE_PROJECT_ID" ]; then
+            [ "$SUPABASE_PROJECT_ID" = "$EXPECTED_REF" ] && row "SUPABASE_PROJECT_ID is the Business project" yes || row "SUPABASE_PROJECT_ID is the Business project" "**no**"
+          fi
+
           if [ -n "$SUPABASE_ACCESS_TOKEN" ]; then
-            code=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" "https://api.supabase.com/v1/projects/$PROJECT_REF" || echo 000)
-            row "Supabase access token works for $PROJECT_REF" "HTTP $code"
+            code=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" "https://api.supabase.com/v1/projects/$EXPECTED_REF" || echo 000)
+            row "Supabase Management API access" "HTTP $code"
+            # Read-only: connection, migration history, ledger and pending files.
+            if plan=$(node scripts/supabase-migrate.mjs plan 2>&1); then
+              row "Database via Management API (read-only plan)" "ok"
+              printf '\n```\n%s\n```\n\n' "$plan" >> "$GITHUB_STEP_SUMMARY"
+            else
+              row "Database via Management API (read-only plan)" "**failed**: $(printf '%s' "$plan" | tail -1 | cut -c1-200)"
+            fi
+            # Live JWT setting of each PILOT function vs. the pin in supabase/config.toml.
+            live=$(curl -sS -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" "https://api.supabase.com/v1/projects/$EXPECTED_REF/functions" \
+              | jq -r '.[] | "\(.slug)=\(.verify_jwt)"' 2>/dev/null || true)
+            for f in $(grep -oE '^\[functions\.[a-z0-9-]+\]' supabase/config.toml | sed 's/\[functions\.//; s/\]//'); do
+              pin=$(awk -v f="[functions.$f]" '$0==f{getline; print $3}' supabase/config.toml)
+              cur=$(printf '%s\n' "$live" | grep -E "^$f=" | cut -d= -f2)
+              if [ -z "$cur" ]; then row "Function $f" "not deployed yet (pin verify_jwt=$pin)"
+              elif [ "$cur" = "$pin" ]; then row "Function $f" "live, verify_jwt=$cur matches pin"
+              else row "Function $f" "**live verify_jwt=$cur, pin says $pin**"; fi
+            done
           fi
-          if [ -n "$SUPABASE_DB_URL" ]; then
-            if psql "$SUPABASE_DB_URL" -XAtqc "select 1" >/dev/null 2>&1; then row "Database connection" ok; else row "Database connection" "**failed**"; fi
-            ledger=$(psql "$SUPABASE_DB_URL" -XAtqc "select count(*) from yeon_ops.migration_ledger" 2>/dev/null || echo "not created yet")
-            row "Migration ledger rows" "$ledger"
-          fi
-          if [ -n "$SUPABASE_URL" ]; then
-            code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${SUPABASE_URL%/}/functions/v1/dev-board-ingest" \
-              -H "Content-Type: application/json" -H "x-yeon-ingest-token: ${DEV_BOARD_INGEST_TOKEN:-none}" --data '{}' || echo 000)
-            # 400 = deployed and token accepted; 401 = token missing or different; 404 = not deployed.
-            row "Dev Board ingest function (400 = ready)" "HTTP $code"
-          fi
-          for env in supabase-auto supabase-production; do
-            # gh prints the error body on stdout when a call fails, so use output only on success.
-            if r=$(gh api "repos/$GITHUB_REPOSITORY/environments/$env" --jq '[.protection_rules[]? | select(.type == "required_reviewers")] | length' 2>/dev/null); then
-              row "Environment $env" "exists, required reviewer rules: $r"
-            else row "Environment $env" "**missing**"; fi
-          done
-          get() { local out; if out=$(gh api "$1" --jq "$2" 2>/dev/null) && [ -n "$out" ] && [ "$out" != "null" ]; then echo "$out"; else echo "unverified (token cannot read it)"; fi; }
-          row "Actions can create PRs (workflow permissions)" "$(get "repos/$GITHUB_REPOSITORY/actions/permissions/workflow" '"\(.default_workflow_permissions), can_approve_pull_request_reviews=\(.can_approve_pull_request_reviews)"')"
-          row "Repo allow_auto_merge" "$(get "repos/$GITHUB_REPOSITORY" .allow_auto_merge)"
-          row "main branch protected" "$(get "repos/$GITHUB_REPOSITORY/branches/main" .protected)"
+
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$APP_URL" || echo 000)
+          row "App address $APP_URL" "HTTP $code"
+
+          r=$(get "repos/$GITHUB_REPOSITORY/environments/production" '[.protection_rules[]? | select(.type == "required_reviewers")] | length')
+          if [ -z "$r" ]; then row "Environment production" "**missing** (high-risk DB/function deploys are refused until it exists)"
+          elif [ "$r" = "0" ]; then row "Environment production" "**exists without required reviewer**"
+          else row "Environment production" "exists, required reviewer set"; fi
+          perm=$(get "repos/$GITHUB_REPOSITORY/actions/permissions/workflow" '"\(.default_workflow_permissions), can_approve_pull_request_reviews=\(.can_approve_pull_request_reviews)"')
+          row "Actions may create PRs" "${perm:-unverified (this token cannot read it; confirmed by the first Auto-Pilot PR)}"
+          prot=$(get "repos/$GITHUB_REPOSITORY/branches/main" .protected)
+          row "main branch protected" "${prot:-unverified}"
           row "Variable AUTOPILOT_AUTOMERGE" "${AUTOMERGE:-unset (auto-merge off)}"
-          row "Variable APP_URL" "${APP_URL:-unset}"

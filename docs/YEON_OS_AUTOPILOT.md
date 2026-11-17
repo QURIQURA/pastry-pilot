@@ -6,30 +6,48 @@ and important approvals. Auto-Pilot does development → tests → PR → migrat
 Status: **Implemented in code, not verified end to end.** Workflows run once the setup below exists.
 `YEON OS setup status` (Actions tab) shows what is actually configured.
 
-## A. One-time setup (owner, once)
+## A. One-time setup
 
-Run **Actions → YEON OS setup status → Run workflow** at any point to check these against the real
-GitHub and Supabase state. It prints set/missing and HTTP codes only, never secret values.
+Run **Actions → YEON OS setup status → Run workflow** to check everything below against the real
+GitHub and Supabase state. It prints set/missing, HTTP codes and non-secret settings, never values.
+Do not ask the owner again for anything marked done here; re-run the status check instead.
 
-| # | Where | What | Needed for |
-| --- | --- | --- | --- |
-| 1 | GitHub → Settings → Secrets → Actions | `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or `ANTHROPIC_API_KEY` | Claude implements issues and reviews PRs |
-| 2 | GitHub → Settings → Actions → General | *Read and write permissions* + *Allow GitHub Actions to create and approve pull requests* | Auto-Pilot opens draft PRs |
-| 3 | GitHub → Secrets | `SUPABASE_ACCESS_TOKEN` (supabase.com → Account → Access tokens) | Edge function deploys |
-| 4 | GitHub → Secrets | `SUPABASE_DB_URL` (Supabase → Connect → Session pooler URI, with the DB password) | Migrations |
-| 5 | GitHub → Settings → Environments | Create `supabase-production` with **you as required reviewer**; create `supabase-auto` with no rules | High-risk DB/function changes wait for your one-click approval |
-| 6 | Supabase → Edge Functions → Secrets, and GitHub → Secrets | The same random value as `DEV_BOARD_INGEST_TOKEN` in both | Workflows record progress on the Dev Board |
-| 7 | GitHub → Variables (optional) | `APP_URL` = the signed-in PILOT address | Post-deploy smoke check |
-| 8 | Supabase → Edge Functions → Secrets (optional) | `GITHUB_READ_TOKEN` (fine-grained, read-only Issues + PRs) | Dev Board sync of private repos |
-| 9 | GitHub → Variables (**approval**) | `AUTOPILOT_AUTOMERGE` = `true` | Turns on auto-merge of low-risk PRs. Leave unset until you approve it |
+### Done (owner reported 2026-11-17; secret presence checked by the setup-status run)
 
-Already in place before this change (secret *names* used by `deploy.yml`, values not checked):
-`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`,
-`SUPABASE_PROJECT_ID`, `VITE_SUPABASE_*`. The setup-status run confirms they exist.
+| Item | Where it is used |
+| --- | --- |
+| `CLAUDE_CODE_OAUTH_TOKEN` (pastry-pilot, shcs-order, wann-planner) | Auto-Pilot implementation and review |
+| `SUPABASE_ACCESS_TOKEN` (all three repos) | Migrations and Dev Board records through the Supabase Management API; edge function deploys |
+| `SUPABASE_PROJECT_ID` (all three repos) | Target project. pastry-pilot refuses to deploy if it is not `meswjzwxldhqkjglnmzt` |
+| GitHub Actions may create PRs (all three repos) | Auto-Pilot draft PRs |
+| `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `SUPABASE_URL`, `VITE_SUPABASE_*` (pastry-pilot, existing) | `deploy.yml` app build and deploy |
 
-After items 3–6 exist, the first run of **Supabase deploy** applies the Development Board
-migration. Because it changes RLS, the run waits for your approval in `supabase-production`. You no
-longer run it in the SQL editor. It also deploys `dev-board-github-sync` and `dev-board-ingest`.
+### Not needed (replaced by existing settings)
+
+| Item | Why it is not needed |
+| --- | --- |
+| `SUPABASE_DB_URL` | SQL runs through the Management API with the existing `SUPABASE_ACCESS_TOKEN`, so no database password is stored in GitHub. It stays an optional override for local runs. |
+| `DEV_BOARD_INGEST_TOKEN` | Workflows record progress with `yeon_ops.dev_board_record(...)` through the same Management API. The planned `dev-board-ingest` edge function was removed, so there is no extra public endpoint. |
+| `APP_URL` | Defaults to `https://quriqura-kora-pilot.oompaya.workers.dev/`, the Worker name `deploy.yml` pins. Set the repository variable only if the address changes. |
+| `supabase-auto` environment | GitHub creates it on first use. It has no rules and is used for low-risk deploys only. |
+
+### Still needed (owner only, needs your GitHub admin login)
+
+**`production` environment with you as required reviewer.** This is the approval gate for
+high-risk database and edge function deploys. Until it exists, high-risk deploys are refused,
+never run unprotected. Claude cannot create it because environment settings need a repository
+admin.
+1. Open https://github.com/QURIQURA/pastry-pilot/settings/environments/new
+2. Name: `production`, then click **Configure environment**.
+3. Tick **Required reviewers**, add `QURIQURA`, and leave **Prevent self-review** unticked,
+   because you are the only reviewer.
+4. Click **Save protection rules**.
+
+### Approval decisions (not setup)
+
+- `AUTOPILOT_AUTOMERGE` = `true` (https://github.com/QURIQURA/pastry-pilot/settings/variables/actions →
+  **New repository variable**) turns on auto-merge of low-risk PRs. Off until you decide.
+- Optional: branch protection on `main` requiring *PR checks / checks* and *PR checks / sql-tests*.
 
 ## B. What Auto-Pilot does after setup
 
@@ -40,6 +58,8 @@ longer run it in the SQL editor. It also deploys `dev-board-github-sync` and `de
    - It does not start when another open PR already refers to the issue, and allows at most 2 attempts.
    - It never edits `.github/` or env files.
 2. **PR checks** (`pr-checks.yml`, every PR).
+   - `sql-tests` applies new migrations on a throwaway Postgres with the real applier, twice, then
+     runs `tests/dev-board-rls.sql`. No secrets are involved.
    - Build, tests (fails only on failures not in `tests/known-failures.txt`) and
      `scripts/lint-changed.sh` run, then a risk check labels the PR `autopilot:low-risk` or
      `autopilot:needs-human`.
@@ -53,19 +73,28 @@ longer run it in the SQL editor. It also deploys `dev-board-github-sync` and `de
    - `scripts/supabase-migrate.mjs` applies only *new* migration files. These are files after
      `supabase/automation-baseline.txt` that are neither in the Lovable history nor in the ledger
      `yeon_ops.migration_ledger`.
-   - All pending files get one dry run that is rolled back. Then each file is applied in its own
+   - All pending files get one dry run on the live project that is rolled back. Then each file is applied in its own
      transaction with its ledger row, and the run stops at the first failure. Editing an applied
      migration is refused.
    - PILOT edge functions listed in `supabase/config.toml` deploy with their pinned `verify_jwt`.
      SHCS functions in the same project are never touched.
    - Low risk runs right away. High risk (RLS, grants, delete/update/drop, auth, SECURITY DEFINER,
-     triggers, SHCS objects, new or secret-touching functions) waits for your approval, and is
-     refused if `supabase-production` has no required reviewer.
+     triggers, SHCS objects, new or secret-touching functions) waits for your approval in
+     `production`, and is refused if `production` has no required reviewer.
+   - **Shared SHCS + Pilot database.**
+     - Every apply takes one Postgres advisory lock (`yeon_ops.migrations`), so runs from any
+       repository never interleave.
+     - The ledger is keyed by repository, so SHCS can use the same ledger later.
+     - Versions Lovable already recorded are skipped.
+     - Any PILOT migration that touches `shco_*` objects is high risk.
 5. **App deploy.** `deploy.yml` (unchanged) runs on push to main. After an Auto-Pilot merge it is
    started after the database step.
-6. **Report.** `post-deploy-check.yml` checks `APP_URL` and records DEPLOYED or FAILED. Every stage
-   records progress on the Dev Board item linked to the issue (`dev-board-ingest`). Nothing
-   automatic ever sets **Verified**: that needs your runtime evidence.
+6. **Report.** `post-deploy-check.yml` checks the app address and records DEPLOYED or FAILED.
+   - Every stage records progress on the Dev Board item linked to the issue, through
+     `yeon_ops.dev_board_record`. Nothing automatic ever sets **Verified**: that needs your runtime
+     evidence.
+   - Steps that hold the Supabase token run scripts from `main`, never from a branch Claude edited.
+     Claude's own steps never receive the token.
 
 State is kept in labels: `autopilot:running`, `pr-open`, `checks-passed/failed`, `low-risk`,
 `needs-human`, `review-passed/blocked`, `merged`, `failed`, `blocked`, `attempt-1/2`.
@@ -97,8 +126,10 @@ State is kept in labels: `autopilot:running`, `pr-open`, `checks-passed/failed`,
 
 ## Dry run (to mark this Verified)
 
-1. Finish setup A, then run *YEON OS setup status*. Every required item should read set/ok.
-2. Approve the waiting *Supabase deploy* run. Check that the Dev Board opens with YOS-001..003.
-3. Create the issue "Docs: add a CHANGELOG line for the Development Board" with the `yeon-auto` label.
-4. Expect: draft PR → checks → `autopilot:low-risk` → review → (merge only if auto-merge is on) →
-   deploy → post-deploy check → board updates. Record the run links in #20.
+1. Create the `production` environment (above). Run *YEON OS setup status*; every row should read set/ok.
+2. Merge PR #19 (your approval). *Supabase deploy* then plans the 2 board migrations and the new
+   `dev-board-github-sync` function as high risk and waits for your **Approve and deploy** in the run.
+3. After approval, open `/dev-board` and check that YOS-001..003 exist and the run is noted on YOS-003.
+4. Create the issue "Docs: add a CHANGELOG line for the Development Board" with the `yeon-auto`
+   label. Expect a draft PR, checks, `autopilot:low-risk`, a review, a merge only if auto-merge
+   is on, then deploy, the post-deploy check and board updates. Record the run links in #20.
