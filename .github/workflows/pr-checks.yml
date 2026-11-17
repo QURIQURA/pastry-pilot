@@ -61,13 +61,9 @@ jobs:
       # Fails only on test failures not already known on main (tests/known-failures.txt).
       - run: node scripts/ci-tests.mjs
 
-      # main has many existing prettier findings, so lint only the files this PR changes.
+      # main has many existing prettier findings, so lint only what this PR touches.
       - name: Lint changed files
-        run: |
-          files=$(git diff --name-only --diff-filter=ACMR "${{ steps.refs.outputs.base }}" HEAD -- '*.ts' '*.tsx' '*.mjs' '*.js' | grep -v '^src/routeTree.gen.ts$' || true)
-          if [ -z "$files" ]; then echo "No lintable files changed."; exit 0; fi
-          echo "$files"
-          echo "$files" | xargs npx eslint
+        run: bash scripts/lint-changed.sh "${{ steps.refs.outputs.base }}"
 
       - id: risk
         run: node scripts/autopilot-risk.mjs "${{ steps.refs.outputs.base }}" HEAD

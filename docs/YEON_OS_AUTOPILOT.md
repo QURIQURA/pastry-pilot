@@ -18,7 +18,7 @@ and `wann-planner` come later, after a successful dry run here.
    - the workflow pushes and opens a **draft PR** with the real check log, then starts PR checks.
 3. `.github/workflows/pr-checks.yml` runs on every PR (and on Auto-Pilot branches):
    - build, `node scripts/ci-tests.mjs` (fails only on test failures not already listed in
-     `tests/known-failures.txt`), eslint on changed files;
+     `tests/known-failures.txt`), `scripts/lint-changed.sh` (new files fully, modified files without the prettier rule);
    - `scripts/autopilot-risk.mjs` labels the change `autopilot:low-risk` or `autopilot:needs-human`
      with reasons. Anything touching `supabase/`, `.github/`, dependencies, auth, secrets, payments,
      cross-OS sync, RPC/edge calls, destructive SQL or >15 files / >400 added lines needs a person;
