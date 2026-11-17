@@ -60,6 +60,8 @@ jobs:
           autopilot:merged|5319e7|Merged by Auto-Pilot (not deployed)
           autopilot:attempt-1|ededed|Auto-Pilot attempt 1
           autopilot:attempt-2|ededed|Auto-Pilot attempt 2
+          handoff:locked|b60205|ChatGPT owns task; Claude must not resume
+          owner:chatgpt|5319e7|Task assigned to ChatGPT
           LABELS
 
       - id: decide
@@ -73,6 +75,8 @@ jobs:
             say "Auto-Pilot ignored this: only people with write access can start it."
           elif [ "$state" != "OPEN" ]; then
             echo "Issue is closed."
+          elif [[ ",$labels," == *",handoff:locked,"* || ",$labels," == *",owner:chatgpt,"* ]]; then
+            echo "HANDOFF LOCK: Claude invocation blocked before startup."
           elif [[ ",$labels," == *",autopilot:running,"* ]]; then
             echo "Already running."
           elif [[ ",$labels," == *",autopilot:attempt-2,"* ]]; then
@@ -145,7 +149,22 @@ jobs:
       - run: npm install -g bun
       - run: bun install --frozen-lockfile
 
+      - name: Handoff Guard (GitHub API only; no Claude tokens)
+        id: handoff
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          state=$(gh issue view "$ISSUE" -R "$GITHUB_REPOSITORY" --json state --jq .state)
+          labels=$(gh issue view "$ISSUE" -R "$GITHUB_REPOSITORY" --json labels --jq '[.labels[].name] | join(",")')
+          if [ "$state" != "OPEN" ] || [[ ",$labels," == *",handoff:locked,"* ]] || [[ ",$labels," == *",owner:chatgpt,"* ]]; then
+            echo "allowed=false" >> "$GITHUB_OUTPUT"
+            echo "HANDOFF LOCK: Claude invocation blocked (state=$state; labels=$labels)."
+          else
+            echo "allowed=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Claude implements the issue
+        if: steps.handoff.outputs.allowed == 'true'
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
@@ -187,7 +206,12 @@ jobs:
             --max-turns 80
             --allowedTools "Read,Glob,Grep,Edit,Write,MultiEdit,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git show:*),Bash(bun run build:*),Bash(bun run lint:*),Bash(node scripts/ci-tests.mjs:*),Bash(node --test:*),Bash(npx eslint:*),Bash(npx prettier:*),Bash(npx tsc:*),Bash(bash scripts/lint-changed.sh:*),Bash(ls:*),Bash(cat:*)"
 
+      - name: Stop safely after handoff
+        if: steps.handoff.outputs.allowed != 'true'
+        run: echo 'Issue handed off; no Claude tokens spent.'
+
       - name: Refuse workflow or secret-file changes
+        if: steps.handoff.outputs.allowed == 'true'
         run: |
           changed=$(git diff --name-only "$BASE"...HEAD)
           echo "$changed"
@@ -196,6 +220,7 @@ jobs:
           fi
 
       - name: Checks (build, tests, lint)
+        if: steps.handoff.outputs.allowed == 'true'
         id: checks1
         continue-on-error: true
         run: |
@@ -210,9 +235,27 @@ jobs:
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
           VITE_SUPABASE_PROJECT_ID: ${{ secrets.VITE_SUPABASE_PROJECT_ID }}
 
+      - name: Handoff Guard before optional Claude fix (zero tokens)
+        id: retry_guard
+        if: steps.checks1.outcome == 'failure' && steps.handoff.outputs.allowed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          state=$(gh issue view "$ISSUE" -R "$GITHUB_REPOSITORY" --json state --jq .state)
+          labels=$(gh issue view "$ISSUE" -R "$GITHUB_REPOSITORY" --json labels --jq '[.labels[].name] | join(",")')
+          if [ "$state" != "OPEN" ] || [[ ",$labels," == *",handoff:locked,"* ]] || [[ ",$labels," == *",owner:chatgpt,"* ]]; then
+            echo "allowed=false" >> "$GITHUB_OUTPUT"
+            echo "HANDOFF LOCK: optional fix skipped."
+          elif grep -Eiq 'permission denied|unauthorized|authentication failed|rate limit|quota exceeded|missing.*(secret|token)|connection timed out|network unreachable|npm ERR! code E(401|403|429)' "$RUNNER_TEMP/checks1.log"; then
+            echo "allowed=false" >> "$GITHUB_OUTPUT"
+            echo "Infrastructure/credential error: do not waste Claude tokens on a code fix."
+          else
+            echo "allowed=true" >> "$GITHUB_OUTPUT"
+          fi
+
       # Bounded retry: exactly one fix attempt, then report whatever the result is.
       - name: Claude fixes failing checks (one attempt)
-        if: steps.checks1.outcome == 'failure'
+        if: steps.retry_guard.outputs.allowed == 'true'
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -230,7 +273,7 @@ jobs:
 
       - name: Re-run checks after fix
         id: checks2
-        if: steps.checks1.outcome == 'failure'
+        if: steps.retry_guard.outputs.allowed == 'true'
         continue-on-error: true
         run: |
           set -o pipefail
@@ -245,12 +288,19 @@ jobs:
           VITE_SUPABASE_PROJECT_ID: ${{ secrets.VITE_SUPABASE_PROJECT_ID }}
 
       - name: Push and open draft PR
+        if: steps.handoff.outputs.allowed == 'true'
         id: pr
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
         run: |
           say() { printf '%s\n\n---\n_Generated by [Claude Code](https://claude.ai/code)_\n' "$1" > "$RUNNER_TEMP/c.md"; gh issue comment "$ISSUE" -R "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/c.md"; }
+          # Final lock check immediately before any push/PR (zero Claude tokens).
+          state=$(gh issue view "$ISSUE" -R "$GITHUB_REPOSITORY" --json state --jq .state)
+          labels=$(gh issue view "$ISSUE" -R "$GITHUB_REPOSITORY" --json labels --jq '[.labels[].name] | join(",")')
+          if [ "$state" != "OPEN" ] || [[ ",$labels," == *",handoff:locked,"* ]] || [[ ",$labels," == *",owner:chatgpt,"* ]]; then
+            echo "HANDOFF LOCK: push/PR blocked."; exit 0
+          fi
           # Re-check after the fix step too.
           if git diff --name-only "$BASE"...HEAD | grep -qE '^\.github/|(^|/)\.env|\.dev\.vars$'; then
             echo "Auto-Pilot may not change workflows or env files." >&2; exit 1
@@ -298,7 +348,7 @@ jobs:
           gh workflow run pr-checks.yml --ref "$BRANCH" -f branch="$BRANCH" || true
 
       - name: Report failure
-        if: failure()
+        if: failure() && steps.handoff.outputs.allowed == 'true'
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
