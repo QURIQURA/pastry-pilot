@@ -384,7 +384,6 @@ export function ProductionOrdersTab({ completed = false }: { completed?: boolean
                     key={adding.slot}
                     sessionId={session.id}
                     nextSort={rows.length}
-                    kind="CORE"
                     slot={adding.slot}
                     productId={session.product_id}
                     productSizeId={session.product_size_id}
@@ -427,7 +426,7 @@ function ProductionOrderComponentList({
         </button>
       </p>
     );
-  const rows = (selections.data ?? []).filter((r) => r.kind === "CORE" || r.kind === "DECORATIVE");
+  const rows = selections.data ?? [];
   if (!rows.length)
     return <p className="text-xs text-muted-foreground">컴포넌트 미지정 · 아래에서 추가하세요.</p>;
   return (
@@ -486,7 +485,7 @@ function ProductionOrderComponentItem({
   return (
     <li className={cn("border px-2 py-2", slotBoxClass(row.slot))}>
       <div className="flex flex-wrap items-center gap-2">
-        <span className="label-caps text-[10px] text-muted-foreground">{row.kind === "DECORATIVE" ? `DECORATIVE · ${row.slot ?? "PIPING"}` : (row.slot ?? "CORE")}</span>
+        <span className="label-caps text-[10px] text-muted-foreground">{row.slot ?? "COMPONENT"}</span>
         <span className="min-w-0 flex-1 text-sm">
           {row.formula_versions.formulas.components?.name ?? row.formula_versions.formulas.name}
         </span>

@@ -605,7 +605,6 @@ export function AddFormulaVersionForm({
   sessionId,
   nextSort,
   onDone,
-  kind = "DECORATIVE",
   slot = null,
   productId = null,
   productSizeId = null,
@@ -613,8 +612,6 @@ export function AddFormulaVersionForm({
   sessionId: string;
   nextSort: number;
   onDone: (createdId?: string) => void;
-  /** 2026-10-06: CORE(Sheet/Cream/Filling 고정 슬롯)에서 추가할 때 전달 — 기본은 자유 추가인 DECORATIVE */
-  kind?: "CORE" | "DECORATIVE";
   slot?: CoreSlot | null;
   /** 2026-10-12 사용자 요청: WORK SESSION이 특정 PRODUCT/PRODUCT SIZE에 연결돼 있으면,
    * product_components.quantity_g(그 사이즈의 COMPONENT별 목표중량)를 읽어와서 배수를
@@ -685,7 +682,6 @@ export function AddFormulaVersionForm({
           capacity_id: scalingMode === "MOULD" ? (selectedVersion?.default_mould_id ?? null) : null,
           capacity_qty: null,
           sort_order: nextSort,
-          kind,
           slot,
         })
         .select("id")
@@ -716,7 +712,7 @@ export function AddFormulaVersionForm({
       onDone(createdId);
       // 2026-10-21: CORE(SHEET/CREAM/FILLING)를 새로 추가하면 Planner에도 TASK가 생겨야 한다 —
       // 예전에는 일정을 저장할 때만 동기화돼서, 일정을 먼저 잡고 나중에 추가한 CREAM 등은 누락됐다.
-      if (kind === "CORE") await syncWorkSessionToPlanner(sessionId);
+      await syncWorkSessionToPlanner(sessionId);
     },
   });
 
@@ -3723,7 +3719,7 @@ function ComponentProductionRow({
         >
           <span className="font-mono text-[11px] text-muted-foreground">
             V{first.formula_versions.version_number} ·{" "}
-            {members.length > 1 ? `MERGED ${members.length}` : (first.slot ?? first.kind)}
+            {members.length > 1 ? `MERGED ${members.length}` : (first.slot ?? "COMPONENT")}
           </span>
           <span className="text-xs text-muted-foreground">생산 기록</span>
         </button>

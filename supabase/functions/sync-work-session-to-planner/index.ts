@@ -652,7 +652,7 @@ Deno.serve(async (req: Request) => {
           "formula_versions(default_mould_id, formulas(name, components(name)))",
       )
       .eq("work_session_id", sessionId)
-      .eq("kind", "CORE");
+      .is("parent_selection_id", null);
     if (coreRowsError) throw coreRowsError;
     const coreRows = (coreRowsRaw ?? []) as unknown as CoreRow[];
     // 레시피 기본 몰드 기준중량(예: 6인치 340g) — 제목의 몰드 개수 역산용
