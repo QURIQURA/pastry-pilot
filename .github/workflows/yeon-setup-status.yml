@@ -62,14 +62,14 @@ jobs:
             row "Dev Board ingest function (400 = ready)" "HTTP $code"
           fi
           for env in supabase-auto supabase-production; do
-            r=$(gh api "repos/$GITHUB_REPOSITORY/environments/$env" --jq '[.protection_rules[]? | select(.type == "required_reviewers")] | length' 2>/dev/null || echo "")
-            if [ -z "$r" ]; then row "Environment $env" "**missing**"; else row "Environment $env" "exists, required reviewer rules: $r"; fi
+            # gh prints the error body on stdout when a call fails, so use output only on success.
+            if r=$(gh api "repos/$GITHUB_REPOSITORY/environments/$env" --jq '[.protection_rules[]? | select(.type == "required_reviewers")] | length' 2>/dev/null); then
+              row "Environment $env" "exists, required reviewer rules: $r"
+            else row "Environment $env" "**missing**"; fi
           done
-          perm=$(gh api "repos/$GITHUB_REPOSITORY/actions/permissions/workflow" --jq '"\(.default_workflow_permissions), can_approve_pull_request_reviews=\(.can_approve_pull_request_reviews)"' 2>/dev/null || echo "unverified (needs admin to read)")
-          row "Actions workflow permissions" "$perm"
-          am=$(gh api "repos/$GITHUB_REPOSITORY" --jq .allow_auto_merge 2>/dev/null || echo unverified)
-          row "Repo allow_auto_merge" "$am"
-          prot=$(gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq .protected 2>/dev/null || echo unverified)
-          row "main branch protected" "$prot"
+          get() { local out; if out=$(gh api "$1" --jq "$2" 2>/dev/null) && [ -n "$out" ] && [ "$out" != "null" ]; then echo "$out"; else echo "unverified (token cannot read it)"; fi; }
+          row "Actions can create PRs (workflow permissions)" "$(get "repos/$GITHUB_REPOSITORY/actions/permissions/workflow" '"\(.default_workflow_permissions), can_approve_pull_request_reviews=\(.can_approve_pull_request_reviews)"')"
+          row "Repo allow_auto_merge" "$(get "repos/$GITHUB_REPOSITORY" .allow_auto_merge)"
+          row "main branch protected" "$(get "repos/$GITHUB_REPOSITORY/branches/main" .protected)"
           row "Variable AUTOPILOT_AUTOMERGE" "${AUTOMERGE:-unset (auto-merge off)}"
           row "Variable APP_URL" "${APP_URL:-unset}"

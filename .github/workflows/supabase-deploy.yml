@@ -101,9 +101,10 @@ jobs:
           if [ "$MIG_RISK" = "none" ] && [ "$FN_RISK" = "none" ]; then echo "work=false" >> "$GITHUB_OUTPUT"; exit 0; fi
           echo "work=true" >> "$GITHUB_OUTPUT"
           if [ "$MIG_RISK" = "high" ] || [ "$FN_RISK" = "high" ]; then
-            reviewers=$(gh api "repos/$GITHUB_REPOSITORY/environments/supabase-production" \
-              --jq '[.protection_rules[]? | select(.type == "required_reviewers")] | length' 2>/dev/null || echo 0)
-            if [ "${reviewers:-0}" = "0" ]; then
+            # gh prints the error body on stdout when the call fails, so only trust output on success.
+            if reviewers=$(gh api "repos/$GITHUB_REPOSITORY/environments/supabase-production" \
+                 --jq '[.protection_rules[]? | select(.type == "required_reviewers")] | length' 2>/dev/null); then :; else reviewers=0; fi
+            if ! [[ "$reviewers" =~ ^[1-9][0-9]*$ ]]; then
               echo "High-risk change, but environment supabase-production has no required reviewer. Refusing to run it unprotected." | tee -a "$GITHUB_STEP_SUMMARY"
               exit 1
             fi
