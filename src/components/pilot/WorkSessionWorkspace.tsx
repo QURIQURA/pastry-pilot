@@ -608,6 +608,7 @@ export function AddFormulaVersionForm({
   slot = null,
   productId = null,
   productSizeId = null,
+  addOnSelect = false,
 }: {
   sessionId: string;
   nextSort: number;
@@ -618,6 +619,7 @@ export function AddFormulaVersionForm({
    * 자동으로 미리 채워준다 — 몰드개수/기본중량개수를 매번 수동 입력하지 않도록. */
   productId?: string | null;
   productSizeId?: string | null;
+  addOnSelect?: boolean;
 }) {
   const formulas = useQuery(formulasQuery());
   // 2026-10-12 사용자 요청: CORE(SHEET/CREAM/FILLING) 슬롯에서 추가할 때는 TECHNIQUE
@@ -677,7 +679,7 @@ export function AddFormulaVersionForm({
   const chosenIngredient = ingredientOptions.find((line) => line.id === planIngredientId);
   const multiplierNum =
     planMode === "MOULD"
-      ? mouldMultiplierForRecipe(Number(planMouldQty), baseTotal, chosenMould)
+      ? (mouldMultiplierForRecipe(Number(planMouldQty), baseTotal, chosenMould) ?? Number.NaN)
       : planMode === "BASE"
         ? baseTotal > 0 && chosenBase?.weight_g
           ? (Number(chosenBase.weight_g) * Number(planBaseQty)) / baseTotal
@@ -689,12 +691,18 @@ export function AddFormulaVersionForm({
           : Number(planMultiplier);
 
   const add = useMutation({
-    mutationFn: async () => {
-      if (!versionId) throw new Error("Select a formula version");
-      if (!Number.isFinite(multiplierNum) || multiplierNum <= 0) {
+    mutationFn: async (picked?: (typeof formulaList)[number]) => {
+      const selectedFormula = picked ?? formula;
+      const selectedVersionId = picked
+        ? [...(picked.formula_versions ?? [])].sort((a, b) => b.version_number - a.version_number)[0]?.id
+        : versionId;
+      const quantityMode = picked ? "MULT" : planMode;
+      const quantity = picked ? 1 : multiplierNum;
+      if (!selectedVersionId) throw new Error("Select a formula version");
+      if (!Number.isFinite(quantity) || quantity <= 0) {
         throw new Error("생산 수량을 올바르게 입력해 주세요.");
       }
-      const plan = parseComponentPlan(String(multiplierNum), "");
+      const plan = parseComponentPlan(String(quantity), "");
       // 2026-10-07 사용자 요청: 같은 FORMULA VERSION도 이 WORK SESSION에 중복으로 추가할 수
       // 있다(예: 같은 레시피를 다른 몰드/배치로 각각) — 더 이상 막지 않는다.
       const user_id = await currentUserId();
@@ -703,19 +711,19 @@ export function AddFormulaVersionForm({
         .insert({
           user_id,
           work_session_id: sessionId,
-          formula_version_id: versionId,
+          formula_version_id: selectedVersionId,
           // New selections start at one recipe batch. Only ADJUST QUANTITY changes the multiplier.
           multiplier: plan.multiplier,
           target_quantity_g: plan.target_quantity_g,
           version_pinned: true,
-          mould_id: planMode === "MOULD" ? planMouldId : null,
-          mould_qty: planMode === "MOULD" ? Number(planMouldQty) : null,
-          capacity_id: planMode === "MOULD" ? planMouldId : null,
-          capacity_qty: planMode === "MOULD" ? Number(planMouldQty) : null,
-          base_weight_id: planMode === "BASE" ? planBaseId : null,
-          base_weight_qty: planMode === "BASE" ? Number(planBaseQty) : null,
-          plan_ingredient_id: planMode === "ING" ? planIngredientId : null,
-          plan_ingredient_g: planMode === "ING" ? Number(planIngredientG) : null,
+          mould_id: quantityMode === "MOULD" ? planMouldId : null,
+          mould_qty: quantityMode === "MOULD" ? Number(planMouldQty) : null,
+          capacity_id: quantityMode === "MOULD" ? planMouldId : null,
+          capacity_qty: quantityMode === "MOULD" ? Number(planMouldQty) : null,
+          base_weight_id: quantityMode === "BASE" ? planBaseId : null,
+          base_weight_qty: quantityMode === "BASE" ? Number(planBaseQty) : null,
+          plan_ingredient_id: quantityMode === "ING" ? planIngredientId : null,
+          plan_ingredient_g: quantityMode === "ING" ? Number(planIngredientG) : null,
           sort_order: nextSort,
           slot,
         })
@@ -730,9 +738,9 @@ export function AddFormulaVersionForm({
       const { error: templateError } = await applyDefaultWorkflowForFormulaVersion({
         sessionId,
         userId: user_id,
-        formulaVersionId: versionId,
-        component: formula?.components ?? null,
-        formulaTechniqueCategoryId: formula?.technique_category_id ?? null,
+        formulaVersionId: selectedVersionId,
+        component: selectedFormula?.components ?? null,
+        formulaTechniqueCategoryId: selectedFormula?.technique_category_id ?? null,
         techniqueCategories: techniqueCategories.data ?? [],
       });
       if (templateError) {
@@ -755,7 +763,7 @@ export function AddFormulaVersionForm({
       className="space-y-3 border border-dashed border-border p-3"
       onSubmit={(e) => {
         e.preventDefault();
-        add.mutate();
+        if (!addOnSelect) add.mutate(undefined);
       }}
     >
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -763,7 +771,16 @@ export function AddFormulaVersionForm({
           <select
             className={selectClass}
             value={formulaId}
-            onChange={(e) => setFormulaId(e.target.value)}
+            disabled={add.isPending}
+            onChange={(e) => {
+              const id = e.target.value;
+              if (!addOnSelect) {
+                setFormulaId(id);
+                return;
+              }
+              const picked = formulaList.find((item) => item.id === id);
+              if (picked) add.mutate(picked);
+            }}
             required
           >
             <option value="">SELECT FORMULA…</option>
@@ -775,7 +792,7 @@ export function AddFormulaVersionForm({
           </select>
         </Field>
       </div>
-      {versionId && (
+      {!addOnSelect && versionId && (
         <div className="space-y-2 border border-border p-3">
           <Field label="입력 방식">
             <select className={selectClass} value={planMode} onChange={(e) => setPlanMode(e.target.value as typeof planMode)}>
@@ -801,7 +818,7 @@ export function AddFormulaVersionForm({
           <p className="font-mono text-xs">생산 배수: {Number.isFinite(multiplierNum) && multiplierNum > 0 ? `${fmtNumber(baseTotal * multiplierNum, 0)}g` : "입력값을 선택해 주세요"}</p>
         </div>
       )}
-      {versionId && (
+      {!addOnSelect && versionId && (
         <div className="space-y-0.5 border border-border bg-muted/30 px-3 py-2 font-mono text-xs">
           {baseIngredients.isLoading ? (
             <p className="text-muted-foreground">기본 레시피 불러오는 중…</p>
@@ -836,7 +853,9 @@ export function AddFormulaVersionForm({
         </div>
       )}
       <p className="text-xs text-muted-foreground">
-        FORMULA를 선택한 뒤 생산 수량을 설정하고 ADD를 누르면 한 번에 저장됩니다.
+        {addOnSelect
+          ? "FORMULA를 선택하면 ×1로 추가됩니다. 추가 후 생산 수량을 조정할 수 있어요."
+          : "FORMULA를 선택한 뒤 생산 수량을 설정하고 ADD를 누르면 한 번에 저장됩니다."}
       </p>
       {add.isError && (
         <p className="font-mono text-xs uppercase text-destructive">
@@ -844,10 +863,10 @@ export function AddFormulaVersionForm({
         </p>
       )}
       <div className="flex gap-2">
-        <button type="submit" className={primaryButtonClass} disabled={add.isPending || !versionId || !Number.isFinite(multiplierNum) || multiplierNum <= 0}>
+        {!addOnSelect && <button type="submit" className={primaryButtonClass} disabled={add.isPending || !versionId || !Number.isFinite(multiplierNum) || multiplierNum <= 0}>
           ADD
-        </button>
-        <button type="button" className={buttonClass} onClick={() => onDone()}>
+        </button>}
+        <button type="button" className={buttonClass} disabled={add.isPending} onClick={() => onDone()}>
           CANCEL
         </button>
       </div>

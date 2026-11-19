@@ -411,12 +411,13 @@ export async function mergeWorkSessions(sourceId: string, targetId: string): Pro
  */
 export async function syncWorkSessionToPlanner(
   sessionId: string,
-  options?: { deletePlannerTaskIds?: string[] },
+  options?: { deletePlannerTaskIds?: string[]; removeBlockId?: string },
 ): Promise<string | null> {
   try {
     const { data, error } = await supabase.functions.invoke("sync-work-session-to-planner", {
       body: {
         work_session_id: sessionId,
+        ...(options?.removeBlockId ? { remove_block_id: options.removeBlockId } : {}),
         ...(options?.deletePlannerTaskIds?.length
           ? { delete_planner_task_ids: options.deletePlannerTaskIds }
           : {}),
