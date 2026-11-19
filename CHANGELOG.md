@@ -33,6 +33,10 @@
 - 타임라인의 작업 버튼과 시간 막대가 1차·2차 작업별로 줄을 나눠 보여요. 번호는 각 줄 안에서 1부터 매겨요.
 - 확인: PRODUCTION › DASHBOARD에서 작업 버튼(▾)을 눌러 작업 탭이나 탭 안 순서를 바꾼 뒤, 타임라인 줄·WORK VIEW 열·오른쪽 생산 기록 순서가 함께 바뀌는지 봐요.
 
+## 2026-11-17 (YEON OS Development Board)
+
+- YEON OS Development Board를 배포했어요. Table, Kanban, Graph 보기를 지원해요.
+
 ## 2026-11-13 (세션 상태 제거 · 버전 선택 UI 제거 · 타임라인 시간 제한 해제)
 
 - 워크 세션 상태(PLANNED/IN_PROGRESS 등) 기능 제거 — 팝업 저장 시 세션 상태와 무관하게 수량·제품·규격·날짜가 항상 반영돼요. 주문의 COMPLETED/CANCELLED만 기준입니다. (마이그레이션 `20261113150000`)
