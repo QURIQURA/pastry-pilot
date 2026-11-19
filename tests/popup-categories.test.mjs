@@ -13,7 +13,7 @@ test("legacy popups receive display defaults without rewriting IDs or completion
   assert.equal(p.check_categories.length, 4);
   assert.deepEqual(p.checklist, [check]);
   assert.equal(old.check_categories, undefined);
-  assert.equal(popupStageLabel(p, "COMPLETED", readPopupStages(null)), "완료");
+  assert.equal(popupStageLabel(p, "COMPLETED", readPopupStages(null)), "COMPLETED");
 });
 test("custom categories rename and remove by transferring items, preserving completion", () => {
   const p = newPopupPlan();

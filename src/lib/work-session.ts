@@ -8,7 +8,7 @@
  */
 import type { Tables, TablesUpdate } from "@/integrations/supabase/types";
 import { supabase } from "@/integrations/supabase/client";
-import { sumInputGrams } from "@/lib/product-usage";
+import { toGrams } from "@/lib/formula";
 import { generateTitle } from "@/lib/datetime";
 import { ingredientDisplayName } from "@/lib/pilot";
 import type { VersionIngredientRow } from "@/lib/queries";
@@ -209,7 +209,7 @@ export function buildMultiplierSnapshot(
 
 /** BASE(×1) 재료 라인들의 총 무게(g) — %/배수 계산과 동일하게 amount(그램) 합산만 사용한다 */
 export function sumBaseGrams(lines: VersionIngredientRow[]): number {
-  return sumInputGrams(lines) ?? 0;
+  return lines.reduce((sum, line) => sum + (toGrams(Number(line.amount), line.unit) ?? 0), 0);
 }
 
 const MULTIPLIER_MATCH_EPSILON = 0.01;

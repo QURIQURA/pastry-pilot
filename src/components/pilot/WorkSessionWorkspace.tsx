@@ -1,3 +1,4 @@
+import { MouldAllocation } from "@/components/pilot/MouldAllocation";
 import { ensureStandardProfile } from "@/lib/standard-profile";
 import { parseComponentPlan } from "@/lib/order-component-plan";
 import { invalidateProductionSync } from "@/lib/production-sync";
@@ -51,6 +52,7 @@ import {
   applySavedQuantities,
   groupProductionSelections,
   rescaleProductionSelections,
+  roundIngredientGrams,
 } from "@/lib/production-quantity";
 import { resolveSlotGroup } from "@/lib/technique";
 import { mouldAbbr, mouldQty, mouldMultiplierForRecipe } from "@/lib/component-size";
@@ -656,10 +658,7 @@ export function AddFormulaVersionForm({
   // 2026-11-06: 배수를 정할 때 기준이 되도록 이 버전의 ×1 총 중량과(SHEET면) 기본 몰드·기준중량을 보여준다.
   const baseIngredients = useQuery(versionIngredientsQuery(versionId || null));
   const allMoulds = useQuery(mouldsQuery());
-  const baseTotal = (baseIngredients.data ?? []).reduce(
-    (sum, row) => sum + (toGrams(Number(row.amount), row.unit) ?? 0),
-    0,
-  );
+  const baseTotal = sumBaseGrams(baseIngredients.data ?? []);
   const hasNonWeight = (baseIngredients.data ?? []).some(
     (row) => toGrams(Number(row.amount), row.unit) == null,
   );
@@ -1016,16 +1015,22 @@ function WeighingView({
   // 열(포뮬라 버전)별 총 중량(g) — 행 순서/표시 여부와 무관하게 전체 재료 기준으로 합산한다.
   // g/kg/ml/l로 환산 가능한 재료만 더하고("ea" 등 무게로 못 바꾸는 단위는 제외), 표시는
   // 항상 g 단위로 통일한다.
-  const totalsByColumn = useMemo(() => {
-    const totals: Record<string, number> = {};
+  const { totalsByColumn, gramsByColumn } = useMemo(() => {
+    const byColumn = new Map<string, { id: string; grams: number }[]>();
     for (const group of groups) {
       for (const cell of group.cells) {
         const grams = toGrams(cell.workingAmount, cell.unit);
         if (grams == null) continue;
-        totals[cell.selectionId] = (totals[cell.selectionId] ?? 0) + grams;
+        const lines = byColumn.get(cell.selectionId) ?? [];
+        lines.push({ id: cell.ingredientLineId, grams });
+        byColumn.set(cell.selectionId, lines);
       }
     }
-    return totals;
+    return {
+      totalsByColumn: Object.fromEntries([...byColumn].map(([id, lines]) =>
+        [id, lines.reduce((sum, line) => sum + line.grams, 0)])),
+      gramsByColumn: new Map([...byColumn].map(([id, lines]) => [id, roundIngredientGrams(lines)])),
+    };
   }, [groups]);
 
   const colSensors = useSensors(
@@ -1413,6 +1418,7 @@ function MatrixColumnHeader({
 function MatrixBodyRow({
   group,
   columns,
+  gramsByColumn,
   height,
   sessionId,
   onResizeStart,
@@ -1420,6 +1426,7 @@ function MatrixBodyRow({
 }: {
   group: ReturnType<typeof buildWeighingGroups>[number];
   columns: WeighingColumn[];
+  gramsByColumn: ReadonlyMap<string, ReadonlyMap<string, number>>;
   height: number;
   sessionId: string;
   onResizeStart: (clientY: number) => void;
@@ -1478,6 +1485,7 @@ function MatrixBodyRow({
               <WeighingMatrixCell
                 sessionId={col.sessionId ?? sessionId}
                 cell={cell}
+                displayGrams={gramsByColumn.get(col.selectionId)?.get(cell.ingredientLineId)}
                 onChanged={onProgressChanged}
               />
             ) : (
@@ -1511,10 +1519,12 @@ const STATUS_CELL_TONE: Record<WorkSessionProgressStatus, string> = {
 function WeighingMatrixCell({
   sessionId,
   cell,
+  displayGrams,
   onChanged,
 }: {
   sessionId: string;
   cell: ReturnType<typeof buildWeighingGroups>[number]["cells"][number];
+  displayGrams: number | undefined;
   onChanged: () => void;
 }) {
   const [note, setNote] = useState(cell.note ?? "");
@@ -1565,8 +1575,7 @@ function WeighingMatrixCell({
         }}
         title={cell.note ?? undefined}
       >
-        {fmtNumber(cell.workingAmount, 0)}
-        {cell.unit}
+        {displayGrams != null ? `${displayGrams}g` : `${fmtNumber(cell.workingAmount, 2)}${cell.unit}`}
         {scaledSecondary != null && cell.secondaryUnit && (
           <span className="ml-1 text-[10px] font-normal text-muted-foreground">
             · {fmtNumber(scaledSecondary, 0)}
@@ -1642,6 +1651,10 @@ function FormulaView({
       {rows.map((row) => {
         const lines = ingredientsByVersion[row.formula_version_id] ?? [];
         const multiplier = Number(row.multiplier);
+        const displayGrams = roundIngredientGrams(lines.flatMap((line) => {
+          const grams = toGrams(workingAmount(Number(line.amount), multiplier), line.unit);
+          return grams == null ? [] : [{ id: line.id, grams }];
+        }));
         return (
           <div key={row.id} className="border border-border">
             <div className="border-b border-border bg-secondary/40 px-3 py-2">
@@ -1665,8 +1678,8 @@ function FormulaView({
                     )}
                   </span>
                   <span className="text-base tabular-nums">
-                    {fmtNumber(workingAmount(Number(line.amount), multiplier), 0)}
-                    {line.unit}
+                    {displayGrams.has(line.id) ? `${displayGrams.get(line.id)}g`
+                      : `${fmtNumber(workingAmount(Number(line.amount), multiplier), 2)}${line.unit}`}
                     {multiplier !== 1 && (
                       <span className="ml-2 font-mono text-xs text-muted-foreground">
                         (orig {fmtNumber(Number(line.amount), 0)}
@@ -3874,6 +3887,10 @@ function ProductionQuantityRow({
   const first = members[0]!;
   const total = members.reduce((sum, row) => sum + Number(row.multiplier), 0);
   const base = sumBaseGrams(lines);
+  const moulds = useQuery(mouldsQuery());
+  const mouldById = new Map((moulds.data ?? []).map((mould) => [mould.id, mould]));
+  const mouldCount = members.reduce((sum, row) => sum + (Number(row.mould_qty) || 0), 0);
+  const allocatedTotal = members.reduce((sum, row) => sum + Math.round(base * Number(row.multiplier)), 0);
   return (
     <div className="space-y-1 px-3 pb-3 pt-2 text-xs">
       {!compact && (
@@ -3883,8 +3900,9 @@ function ProductionQuantityRow({
         </p>
       )}
       <p className="font-mono">
-        기본 배합 {fmtNumber(base)}g × {fmtNumber(total, 4)} ={" "}
-        <strong>{fmtNumber(base * total)}g</strong>
+        기본 배합 {fmtNumber(base, 0)}g · 레시피 배수 ×{fmtNumber(total, 4)} · 전체{" "}
+        <strong>{fmtNumber(allocatedTotal, 0)}g</strong>
+        {mouldCount > 0 && <> · 몰드 {mouldCount}개</>}
       </p>
       <p className="font-mono text-[10px] text-muted-foreground">
         {members
@@ -3894,6 +3912,18 @@ function ProductionQuantityRow({
           )
           .join(" + ")}
       </p>
+      {members.map((member) => {
+        const mould = member.mould_id ? mouldById.get(member.mould_id) : undefined;
+        return mould && (
+          <MouldAllocation
+            key={member.id}
+            row={member}
+            batchGrams={base * Number(member.multiplier)}
+            label={labels[member.id] ?? "WORK SESSION"}
+            mouldLabel={mouldAbbr(mould)}
+          />
+        );
+      })}
       <div className="flex flex-wrap gap-2">
         <Link to="/production" search={{ tab: "ORDERS" }} className="underline">
           읽기 전용 · ORDERS에서 계획 수정 →

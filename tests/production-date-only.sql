@@ -12,4 +12,18 @@ begin
   update public.work_session_formula_versions set planned_date = null where planned_date = '2026-11-20';
   if not found then raise exception 'Date-only plan was not cleared'; end if;
 end $$;
+update public.work_session_formula_versions set batter_split_g = array[681,680]
+where user_id = '00000000-0000-0000-0000-0000000000b2';
+do $$
+begin
+  if not exists (select 1 from public.work_session_formula_versions where batter_split_g = array[681,680]) then
+    raise exception 'Batter split was not persisted';
+  end if;
+  begin
+    update public.work_session_formula_versions set batter_split_g = array[681,0];
+    raise exception 'Invalid allocation was accepted';
+  exception when check_violation then
+    null;
+  end;
+end $$;
 rollback;

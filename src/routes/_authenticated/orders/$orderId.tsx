@@ -1,3 +1,4 @@
+import { OrderDetailLayout, type OrderDetailTab } from "@/components/pilot/OrderDetailLayout";
 import { PopupOrderWorkspace } from "@/components/pilot/PopupOrderWorkspace";
 import { ComponentPlanReadout } from "@/components/pilot/ComponentPlanReadout";
 import { toast } from "sonner";
@@ -211,7 +212,7 @@ function OrderDetailPage() {
   // 2026-10-15 사용자 재요청: "visuals가 먼저 뜨게해줘" — 탭 순서도 VISUALS를 앞으로, 페이지
   // 진입 시 기본 선택 탭도 VISUALS로.
   // 2026-11-05 사용자 요청: "Visual/Production detail/Order detail 이렇게 따로 탭 만들자"
-  const [activeTab, setActiveTab] = useState<"VISUALS" | "PRODUCTION DETAIL" | "ORDER DETAIL">(
+  const [activeTab, setActiveTab] = useState<OrderDetailTab>(
     "ORDER DETAIL",
   );
 
@@ -440,7 +441,7 @@ function OrderDetailPage() {
     assign("dietaryBuildId", setDietaryBuildId, o.dietary_build_id ?? "");
     assign("audience", setAudience, o.audience ?? "");
     assign("deliveryAddress", setDeliveryAddress, o.delivery_address ?? "");
-    assign("fulfilmentMethod", setFulfilmentMethod, o.fulfilment_method ?? "PICKUP");
+    assign("fulfilmentMethod", setFulfilmentMethod, o.fulfilment_method === "DELIVERY" ? "DELIVERY" : "PICKUP");
     assign("makerSatisfaction", setMakerSatisfaction, o.maker_satisfaction ?? "");
     assign("customerSatisfaction", setCustomerSatisfaction, o.customer_satisfaction ?? "");
     assign("customerFeedback", setCustomerFeedback, o.customer_feedback ?? "");
@@ -705,15 +706,10 @@ function OrderDetailPage() {
     return <PopupOrderWorkspace key={order.data.id} order={order.data} />;
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-3">
-        <div className="space-y-1">
-          <Link
-            to="/orders"
-            className="label-caps text-xs text-muted-foreground hover:text-foreground"
-          >
-            ← ORDERS
-          </Link>
+    <OrderDetailLayout
+      tab={activeTab}
+      onTabChange={setActiveTab}
+      identity={<>
           <input
             className="label-caps w-full max-w-[16rem] border-0 bg-transparent p-0 text-lg text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
             value={orderNumber}
@@ -724,8 +720,8 @@ function OrderDetailPage() {
           <p className="font-mono text-xs uppercase text-muted-foreground">
             CREATED {formatDateTime(order.data.created_at)}
           </p>
-        </div>
-        <div className="flex items-center gap-2">
+      </>}
+      actions={<div className="flex items-center gap-2">
           {/* 2026-10-06 사용자 요청: Status 색상은 SETTINGS의 ORDER STATUS COLORS 설정을
               그대로 따라가도록 — 드롭다운 옆에 현재 선택된 단계의 색을 점으로 보여준다. */}
           <span
@@ -750,26 +746,8 @@ function OrderDetailPage() {
             error={save.error}
             onRetry={() => void retrySave()}
           />
-        </div>
-      </div>
-
-      <div className="flex items-center gap-2 border-b border-border">
-        {(["VISUALS", "PRODUCTION DETAIL", "ORDER DETAIL"] as const).map((tab) => (
-          <button
-            key={tab}
-            type="button"
-            onClick={() => setActiveTab(tab)}
-            className={`label-caps -mb-px border-b-2 px-3 py-2 text-xs transition-colors ${
-              activeTab === tab
-                ? "border-foreground text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {tab}
-          </button>
-        ))}
-      </div>
-
+        </div>}
+    >
       {activeTab === "VISUALS" ? (
         <div className="space-y-3">
           {/* 2026-10-13 사용자 요청: "오더마다 무드보드를 만들고싶은데, 디자인 아이디어 구상용으로.
@@ -1443,6 +1421,6 @@ function OrderDetailPage() {
           </button>
         </div>
       </div>
-    </div>
+    </OrderDetailLayout>
   );
 }

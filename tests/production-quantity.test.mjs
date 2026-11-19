@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { loadTs } from "./load-ts.mjs";
-const { applySavedQuantities, groupProductionSelections, rescaleProductionSelections } =
+const { applySavedQuantities, equalMouldSplit, matchesMouldSplit, roundIngredientGrams, groupProductionSelections, rescaleProductionSelections } =
   await loadTs("src/lib/production-quantity.ts");
 test("MERGED ×4 publishes confirmed quantities to both rows and weighing data before refetch", () => {
   const cached = [
@@ -115,4 +115,19 @@ test("reject invalid quantities and different versions", () => {
   assert.throws(() => rescaleProductionSelections([rows[0], rows[3]], 1));
   assert.throws(() => rescaleProductionSelections([rows[0], rows[0]], 1));
   assert.throws(() => rescaleProductionSelections([], 1));
+});
+
+test("whole-gram split retains every gram and validates independently for each source order", () => {
+  assert.deepEqual(equalMouldSplit(1361, 2), [681, 680]);
+  assert.deepEqual(equalMouldSplit(1360, 2), [680, 680]);
+  assert.equal(matchesMouldSplit([700, 660], 2, 1360), true);
+  assert.equal(matchesMouldSplit([700, 659], 2, 1360), false);
+  assert.equal(matchesMouldSplit([1360], 2, 1360), false);
+  assert.deepEqual(equalMouldSplit(1360, 1.5), []);
+});
+
+test("displayed ingredient grams add up to the displayed whole batch", () => {
+  const lines = [{ id: "egg", grams: 200.36 }, { id: "flour", grams: 101.45 }];
+  assert.deepEqual([...roundIngredientGrams(lines)], [["flour", 102], ["egg", 200]]);
+  assert.equal([...roundIngredientGrams(lines).values()].reduce((sum, grams) => sum + grams, 0), 302);
 });

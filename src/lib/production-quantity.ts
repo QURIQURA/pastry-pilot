@@ -64,3 +64,36 @@ export function rescaleProductionSelections<T extends QuantitySelection>(
     return { row, multiplier };
   });
 }
+
+/** Allocate whole grams while preserving the batch total, including the remainder. */
+export function equalMouldSplit(batchGrams: number, count: number): number[] {
+  const grams = Math.round(batchGrams);
+  if (
+    !Number.isSafeInteger(grams) ||
+    !Number.isInteger(count) ||
+    count < 1 ||
+    count > 100 ||
+    grams < count
+  )
+    return [];
+  const perMould = Math.floor(grams / count);
+  const remainder = grams % count;
+  return Array.from({ length: count }, (_, index) => perMould + Number(index < remainder));
+}
+
+export function matchesMouldSplit(weights: number[], count: number, batchGrams: number): boolean {
+  return (
+    weights.length === count &&
+    weights.every((grams) => Number.isSafeInteger(grams) && grams > 0) &&
+    weights.reduce((sum, grams) => sum + grams, 0) === Math.round(batchGrams)
+  );
+}
+
+/** Round the column once and distribute the difference to the largest fractional grams. */
+export function roundIngredientGrams(lines: { id: string; grams: number }[]): Map<string, number> {
+  const ordered = lines.map(({ id, grams }) => ({ id, grams, floor: Math.floor(grams) }));
+  const target = Math.round(ordered.reduce((sum, line) => sum + line.grams, 0));
+  const remainder = target - ordered.reduce((sum, line) => sum + line.floor, 0);
+  ordered.sort((a, b) => b.grams - b.floor - (a.grams - a.floor) || a.id.localeCompare(b.id));
+  return new Map(ordered.map((line, index) => [line.id, line.floor + Number(index < remainder)]));
+}

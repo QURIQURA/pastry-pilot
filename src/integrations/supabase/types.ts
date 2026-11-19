@@ -4078,6 +4078,7 @@ export type Database = {
           added_at: string
           base_weight_id: string | null
           base_weight_qty: number | null
+          batter_split_g: number[] | null
           capacity_id: string | null
           capacity_qty: number | null
           formula_version_id: string
@@ -4104,6 +4105,7 @@ export type Database = {
           added_at?: string
           base_weight_id?: string | null
           base_weight_qty?: number | null
+          batter_split_g?: number[] | null
           capacity_id?: string | null
           capacity_qty?: number | null
           formula_version_id: string
@@ -4130,6 +4132,7 @@ export type Database = {
           added_at?: string
           base_weight_id?: string | null
           base_weight_qty?: number | null
+          batter_split_g?: number[] | null
           capacity_id?: string | null
           capacity_qty?: number | null
           formula_version_id?: string

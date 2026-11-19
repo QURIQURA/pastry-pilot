@@ -1,3 +1,4 @@
+import { OrderDetailLayout, type OrderDetailTab } from "@/components/pilot/OrderDetailLayout";
 import { PopupLinkedCakes } from "./PopupLinkedCakes";
 import { PopupStagePicker } from "./PopupStageSelect";
 import { PopupChecklistSection } from "./PopupChecklistSection";
@@ -46,7 +47,7 @@ const initial = (order: OrderListRow) => ({
 export function PopupOrderWorkspace({ order }: { order: OrderListRow }) {
   const client = useQueryClient();
   const navigate = useNavigate();
-  const [tab, setTab] = useState<"POP UP DETAIL" | "VISUALS">("POP UP DETAIL");
+  const [tab, setTab] = useState<OrderDetailTab>("ORDER DETAIL");
   const [draft, setDraft] = useState(() => initial(order));
   const baseline = useRef({ state: initial(order), updatedAt: order.updated_at });
   const dirty = JSON.stringify(draft) !== JSON.stringify(baseline.current.state);
@@ -232,12 +233,10 @@ export function PopupOrderWorkspace({ order }: { order: OrderListRow }) {
     save: () => save.mutate(),
   });
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-3">
-        <div className="min-w-0 flex-1">
-          <Link to="/orders" className="text-xs underline">
-            ← ORDERS
-          </Link>
+    <OrderDetailLayout
+      tab={tab}
+      onTabChange={setTab}
+      identity={
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <input
               className="label-caps w-[10rem] max-w-full border-0 bg-transparent p-0 text-lg text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
@@ -257,25 +256,13 @@ export function PopupOrderWorkspace({ order }: { order: OrderListRow }) {
               onChange={(e) => setPlan({ title: e.target.value })}
             />
           </div>
-        </div>
-        <PopupStagePicker
+      }
+      actions={<PopupStagePicker
           value={plan.stage_id || (draft.status === "COMPLETED" ? "COMPLETED" : "")}
           disabled={busy}
           onChange={(stage_id) => setPlan({ stage_id })}
-        />
-      </div>
-      <div className="flex gap-2 border-b border-border">
-        {(["POP UP DETAIL", "VISUALS"] as const).map((t) => (
-          <button
-            type="button"
-            key={t}
-            className={`label-caps border-b-2 px-3 py-2 text-xs ${t === tab ? "border-foreground" : "border-transparent text-muted-foreground"}`}
-            onClick={() => setTab(t)}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
+        />}
+    >
       {tab === "VISUALS" ? (
         <div className="space-y-3">
           <OrderMoodboardSection orderId={order.id} />
@@ -283,6 +270,7 @@ export function PopupOrderWorkspace({ order }: { order: OrderListRow }) {
         </div>
       ) : (
         <fieldset disabled={busy} className="space-y-3">
+          {tab === "ORDER DETAIL" ? <>
           <PopupLinkedCakes popupId={order.id} />
           <SectionCard title="POP UP DETAIL">
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(0,2fr)_minmax(0,1.2fr)_minmax(0,1.3fr)_minmax(0,1.3fr)]">
@@ -319,6 +307,7 @@ export function PopupOrderWorkspace({ order }: { order: OrderListRow }) {
               </Field>
             </div>
           </SectionCard>
+          </> : <>
           <SectionCard
             title={`생산 품목 & PREORDER · ${plan.items.length}개`}
             action={
@@ -544,6 +533,7 @@ export function PopupOrderWorkspace({ order }: { order: OrderListRow }) {
             />
           )}
           <PopupChecklistSection plan={plan} onChange={setPlan} />
+          </>}
           <SectionCard title="운영 메모">
             <textarea
               className={inputClass}
@@ -589,7 +579,7 @@ export function PopupOrderWorkspace({ order }: { order: OrderListRow }) {
           onRetry={autosave.retry}
         />
       </div>
-    </div>
+    </OrderDetailLayout>
   );
 }
 

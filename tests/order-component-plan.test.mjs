@@ -38,12 +38,12 @@ test("merged orders sum demand without treating unknown as zero", () => {
     -157.5,
   );
 });
-test("positive integer entry, blank demand, zero demand, and legacy merge allocations", () => {
+test("positive fractional batches preserve blank and zero demand", () => {
   assert.deepEqual(parseComponentPlan("1", ""), { multiplier: 1, target_quantity_g: null });
   assert.equal(parseComponentPlan("1", "0").target_quantity_g, 0);
-  for (const n of ["0", "-1", "1.5", "Infinity", "NaN", ""])
+  for (const n of ["0", "-1", "Infinity", "NaN", ""])
     assert.throws(() => parseComponentPlan(n, "100"));
   for (const n of ["-1", "Infinity", "NaN"]) assert.throws(() => parseComponentPlan("1", n));
   assert.equal(parseComponentPlan("0.5", "100", 0.5).multiplier, 0.5);
-  assert.throws(() => parseComponentPlan("0.75", "100", 0.5));
+  assert.equal(parseComponentPlan("0.75", "100", 0.5).multiplier, 0.75);
 });
