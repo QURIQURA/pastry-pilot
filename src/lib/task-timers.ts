@@ -55,3 +55,10 @@ export function taskTimerSummary(timers: TaskTimer[]) {
     completed_at: runningCount > 0 ? null : (finishes.at(-1) ?? null),
   };
 }
+
+/** Clear one timer's actual reading while retaining its label, target duration, and siblings. */
+export function resetTaskTimer(timers: TaskTimer[], timerId: string) {
+  return timers.map((timer) =>
+    timer.id === timerId ? { ...timer, started_at: null, done_at: null } : timer,
+  );
+}

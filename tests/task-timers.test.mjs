@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { loadTs } from "./load-ts.mjs";
 
-const { taskTimerSummary, timerElapsedSec } = await loadTs("src/lib/task-timers.ts");
+const { resetTaskTimer, taskTimerSummary, timerElapsedSec } =
+  await loadTs("src/lib/task-timers.ts");
 const { formatDateTime } = await loadTs("src/lib/datetime.ts");
 
 test("actual timer timestamps and elapsed time survive Sydney midnight", () => {
@@ -23,4 +24,28 @@ test("actual timer timestamps and elapsed time survive Sydney midnight", () => {
     completed_at: end,
   });
   assert.equal(timerElapsedSec(timer, new Date(end)), 600);
+});
+
+test("reset clears only the selected timer and the summary falls back to remaining actuals", () => {
+  const first = {
+    id: "one",
+    label: "Bake",
+    minutes: 30,
+    started_at: "2026-11-20T01:00:00Z",
+    done_at: "2026-11-20T01:31:00Z",
+  };
+  const second = {
+    id: "two",
+    label: "Cool",
+    minutes: null,
+    started_at: "2026-11-20T01:31:00Z",
+    done_at: "2026-11-20T01:41:00Z",
+  };
+  const cleared = resetTaskTimer([first, second], first.id);
+  assert.deepEqual(cleared[0], { ...first, started_at: null, done_at: null });
+  assert.equal(cleared[1], second);
+  assert.equal(taskTimerSummary(cleared).actual_started_at, second.started_at);
+  const empty = taskTimerSummary(resetTaskTimer(cleared, second.id));
+  assert.equal(empty.actual_started_at, null);
+  assert.equal(empty.completed_at, null);
 });
