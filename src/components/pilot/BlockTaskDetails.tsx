@@ -26,6 +26,7 @@ import { syncWorkSessionToPlanner } from "@/lib/work-session";
 import {
   newTimer,
   readTimers,
+  resetTaskTimer,
   taskTimerSummary,
   timerElapsedSec,
   type TaskTimer,
@@ -98,7 +99,11 @@ const timeValue = (iso: string | null) => (iso ? formatTime(iso) : "");
 const numOrNull = (v: string) => (v.trim() ? Number(v) : null);
 
 /** 타이머 목록 저장 — 레거시 timer_minutes는 첫 타이머로 옮겨졌으므로 비운다. */
-async function saveTimers(task: WorkSessionTask, timers: TaskTimer[], updateSummary = false) {
+async function saveTimers(
+  task: WorkSessionTask,
+  timers: TaskTimer[],
+  updateSummary: boolean | "reset" = false,
+) {
   const userId = await currentUserId();
   const { runningCount, ...summary } = taskTimerSummary(timers);
   if (runningCount > 1) return { message: "이 작업에서 이미 타이머가 실행 중이에요." };
@@ -112,7 +117,13 @@ async function saveTimers(task: WorkSessionTask, timers: TaskTimer[], updateSumm
       timer_minutes: null,
       ...(updateSummary && {
         ...summary,
-        ...(runningCount > 0 && { status: "IN_PROGRESS" as const }),
+        ...(updateSummary === "reset"
+          ? {
+              status: summary.actual_started_at
+                ? ("IN_PROGRESS" as const)
+                : ("NOT_STARTED" as const),
+            }
+          : runningCount > 0 && { status: "IN_PROGRESS" as const }),
       }),
     })
     .eq("id", task.id)
@@ -142,6 +153,7 @@ export function BlockTaskDetails({
   const tasks = useQuery(workSessionTasksQuery(sessionId));
   const typeDefs = useQuery(taskTypeDefinitionsQuery());
   const [error, setError] = useState<string | null>(null);
+  const [resetting, setResetting] = useState(false);
   const creating = useRef<string | null>(null);
 
   const task: WorkSessionTask | undefined = (tasks.data ?? []).find(
@@ -230,6 +242,23 @@ export function BlockTaskDetails({
     setError(e ? `타이머 저장 실패 — ${e.message}` : null);
     await refresh();
   };
+  const resetTimer = async (timer: TaskTimer) => {
+    if (resetting || !window.confirm("이 타이머의 시작·종료 기록을 리셋할까요?")) return;
+    setResetting(true);
+    try {
+      const error = await saveTimers(task, resetTaskTimer(timers, timer.id), "reset");
+      setError(error ? `타이머 리셋 실패 — ${error.message}` : null);
+      await refresh();
+      if (!error && task.status === "DONE") {
+        const syncError = await syncWorkSessionToPlanner(sessionId);
+        if (syncError) setError(`플래너 반영 실패 — ${syncError}`);
+      }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "타이머 리셋에 실패했어요.");
+    } finally {
+      setResetting(false);
+    }
+  };
   // 타이머 하나의 시작/종료/분을 고친다 — 분은 시작(초 버림)에 더해 종료로 환산하고, TASK의 Start/End도 타이머들에 맞춘다.
   const editTimer = async (
     t: TaskTimer,
@@ -305,7 +334,7 @@ export function BlockTaskDetails({
             {workMinutes > 0 && workMinutes !== doneMinutes && <> · 실작업 {workMinutes}분</>}
           </span>
         </div>
-        <div className="grid grid-cols-[1rem_minmax(5rem,1fr)_4rem_4rem_3rem_4.5rem] items-center gap-x-1.5 gap-y-1">
+        <div className="grid grid-cols-[1rem_minmax(2.5rem,1fr)_3rem_3rem_2.5rem_minmax(2rem,auto)] items-center gap-x-1.5 gap-y-1">
           <span />
           <span className="text-[10px] text-muted-foreground">이름</span>
           <span className="text-[10px] text-muted-foreground">시작</span>
@@ -382,6 +411,18 @@ export function BlockTaskDetails({
                     </button>
                   ) : (
                     <span className="px-1.5 text-[11px] text-[#3E8E5A]">✓</span>
+                  )}
+                  {(t.started_at || t.done_at) && (
+                    <button
+                      type="button"
+                      className="shrink-0 px-1 text-xs text-muted-foreground hover:text-foreground"
+                      aria-label={`${idx + 1}번 타이머 리셋`}
+                      title="타이머 리셋"
+                      disabled={resetting}
+                      onClick={() => void resetTimer(t)}
+                    >
+                      ↺
+                    </button>
                   )}
                   {timers.length > 1 && (
                     <button

@@ -1062,6 +1062,7 @@ type WeighingColumn = {
   slot?: string | null;
   mouldId?: string | null;
   mouldQty?: number | null;
+  mergeCount?: number;
   batterSplit?: number[] | null;
   /** 레시피 기본 몰드 — 몰드 개수가 비어 있을 때 배수에서 거꾸로 계산하는 데 사용 */
   baseMouldId?: string | null;
@@ -1094,6 +1095,7 @@ function WeighingView({
   onSelectColumn,
   onColumnOrder,
   onEditPlan,
+  onToggleMerge,
 }: {
   sessionId: string;
   groups: ReturnType<typeof buildWeighingGroups>;
@@ -1102,6 +1104,7 @@ function WeighingView({
   onEditColumn?: (column: WeighingColumn) => void;
   onSelectColumn?: ((id: string) => void) | undefined;
   onColumnOrder?: ((ids: string[]) => void) | undefined;
+  onToggleMerge?: ((versionId: string) => void) | undefined;
   onEditPlan?: ((id: string) => void) | undefined;
 }) {
   const mouldsForTotal = useQuery(mouldsQuery());
@@ -1309,21 +1312,20 @@ function WeighingView({
                     formulaName={col.formulaName}
                     formulaId={col.formulaId}
                     versionId={col.formulaVersionId}
-                    multiplier={col.multiplier}
                     onSelect={
                       onSelectColumn
                         ? () => onSelectColumn(col.groupKey ?? col.selectionId)
                         : undefined
                     }
-                    onEditPlan={
-                      onEditPlan && !col.groupKey ? () => onEditPlan(col.selectionId) : undefined
-                    }
-                    mouldLabel={
-                      col.mouldId && mouldById.get(col.mouldId)
-                        ? mouldAbbr(mouldById.get(col.mouldId)!)
+                    mergeAction={
+                      onToggleMerge && col.mergeCount && col.mergeCount > 1
+                        ? {
+                            count: col.mergeCount,
+                            merged: (col.members?.length ?? 0) > 1,
+                            toggle: () => onToggleMerge(col.formulaVersionId),
+                          }
                         : undefined
                     }
-                    mouldCount={col.mouldQty}
                     sourceLabel={col.members
                       ?.map((member) => member.label)
                       .filter(Boolean)
@@ -1347,6 +1349,85 @@ function WeighingView({
                 key={MATRIX_FILLER_COL_ID}
                 className="sticky top-0 z-20 bg-secondary shadow-[inset_0_-1px_0_0_var(--color-border),inset_1px_0_0_0_var(--color-border)]"
               />
+            </tr>
+            {(onEditPlan || displayColumns.some((column) => column.mouldId)) && (
+              <tr>
+                <th className="label-caps sticky left-0 z-10 border border-border bg-secondary px-3 py-1 text-right text-[11px]">
+                  몰드 · 개수
+                </th>
+                {displayColumns.map((column) => {
+                  const mould = column.mouldId ? mouldById.get(column.mouldId) : undefined;
+                  return (
+                    <td
+                      key={column.selectionId}
+                      className="border border-border bg-secondary px-2 py-1 text-xs"
+                    >
+                      {onEditPlan && !column.groupKey ? (
+                        <button
+                          type="button"
+                          className="text-left underline-offset-2 hover:underline"
+                          onClick={() => onEditPlan(column.selectionId)}
+                          title="생산 계획 편집"
+                        >
+                          {mould
+                            ? `${mouldAbbr(mould)}${column.mouldQty == null ? "" : ` · ${column.mouldQty}개`}`
+                            : "생산 수량 편집"}
+                        </button>
+                      ) : mould ? (
+                        `${mouldAbbr(mould)}${column.mouldQty == null ? "" : ` · ${column.mouldQty}개`}`
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                  );
+                })}
+                <td className="border border-border bg-secondary" />
+              </tr>
+            )}
+            {(onEditPlan || displayColumns.some((c) => c.mouldId)) && (
+              <tr>
+                <th className="label-caps sticky left-0 z-10 border-t border-r border-border bg-secondary px-3 py-1 text-right text-[11px] text-muted-foreground">
+                  몰드별 배분
+                </th>
+                {displayColumns.map((col) => {
+                  // 2026-11-13: 팝업 세션은 slot이 null이라 SHEET 한정이면 몰드 행이 사라졌다 — 몰드가 있으면 슬롯과 무관하게 표시.
+                  const m = col.mouldId ? mouldById.get(col.mouldId) : null;
+                  const baseM = col.baseMouldId ? mouldById.get(col.baseMouldId) : null;
+                  const qty =
+                    col.mouldQty ?? (m && baseM ? mouldQty(col.multiplier, baseM, m) : null);
+                  // Use actual batter total, not the nominal mould capacity.
+                  const actualTotal = totalsByColumn[col.selectionId] ?? 0;
+                  const split =
+                    qty == null
+                      ? []
+                      : col.batterSplit && matchesMouldSplit(col.batterSplit, qty, actualTotal)
+                        ? col.batterSplit
+                        : equalMouldSplit(actualTotal, qty);
+                  return (
+                    <td
+                      key={col.selectionId}
+                      className="border-t border-l border-border bg-secondary px-2 py-1 text-left font-mono text-[11px] tabular-nums text-muted-foreground"
+                    >
+                      {split.length > 1 ? split.map((grams) => `${grams}g`).join(" + ") : "—"}
+                    </td>
+                  );
+                })}
+                <td className="border-t border-l border-border bg-secondary" />
+              </tr>
+            )}
+            <tr>
+              <th className="label-caps sticky left-0 z-10 border-t border-r border-border bg-secondary px-3 py-2 text-right text-xs text-muted-foreground">
+                전체 중량
+              </th>
+              {displayColumns.map((col) => (
+                <td
+                  key={col.selectionId}
+                  className="border-t border-l border-border bg-secondary px-2 py-2 text-left text-sm font-semibold tabular-nums"
+                >
+                  {fmtNumber(totalsByColumn[col.selectionId] ?? 0, 0)}g
+                </td>
+              ))}
+              <td className="border-t border-l border-border bg-secondary" />
             </tr>
           </thead>
         </DndContext>
@@ -1372,74 +1453,6 @@ function WeighingView({
             </tbody>
           </SortableContext>
         </DndContext>
-        <tfoot>
-          {displayColumns.some((column) => column.mouldId) && (
-            <tr>
-              <th className="label-caps sticky left-0 z-10 border border-border bg-secondary px-3 py-1 text-right text-[11px]">
-                몰드 · 개수
-              </th>
-              {displayColumns.map((column) => {
-                const mould = column.mouldId ? mouldById.get(column.mouldId) : undefined;
-                return (
-                  <td
-                    key={column.selectionId}
-                    className="border border-border bg-secondary px-2 py-1 text-xs"
-                  >
-                    {mould
-                      ? `${mouldAbbr(mould)}${column.mouldQty == null ? "" : ` · ${column.mouldQty}개`}`
-                      : "—"}
-                  </td>
-                );
-              })}
-              <td className="border border-border bg-secondary" />
-            </tr>
-          )}
-          {displayColumns.some((c) => c.mouldId) && (
-            <tr>
-              <th className="label-caps sticky left-0 z-10 border-t border-r border-border bg-secondary px-3 py-1 text-right text-[11px] text-muted-foreground">
-                몰드별 배분
-              </th>
-              {displayColumns.map((col) => {
-                // 2026-11-13: 팝업 세션은 slot이 null이라 SHEET 한정이면 몰드 행이 사라졌다 — 몰드가 있으면 슬롯과 무관하게 표시.
-                const m = col.mouldId ? mouldById.get(col.mouldId) : null;
-                const baseM = col.baseMouldId ? mouldById.get(col.baseMouldId) : null;
-                const qty =
-                  col.mouldQty ?? (m && baseM ? mouldQty(col.multiplier, baseM, m) : null);
-                // Use actual batter total, not the nominal mould capacity.
-                const actualTotal = totalsByColumn[col.selectionId] ?? 0;
-                const split =
-                  qty == null
-                    ? []
-                    : col.batterSplit && matchesMouldSplit(col.batterSplit, qty, actualTotal)
-                      ? col.batterSplit
-                      : equalMouldSplit(actualTotal, qty);
-                return (
-                  <td
-                    key={col.selectionId}
-                    className="border-t border-l border-border bg-secondary px-2 py-1 text-left font-mono text-[11px] tabular-nums text-muted-foreground"
-                  >
-                    {split.length > 1 ? split.map((grams) => `${grams}g`).join(" + ") : "—"}
-                  </td>
-                );
-              })}
-              <td className="border-t border-l border-border bg-secondary" />
-            </tr>
-          )}
-          <tr>
-            <th className="label-caps sticky left-0 bottom-0 z-10 border-t border-r border-border bg-secondary px-3 py-2 text-right text-xs text-muted-foreground">
-              전체 중량
-            </th>
-            {displayColumns.map((col) => (
-              <td
-                key={col.selectionId}
-                className="border-t border-l border-border bg-secondary px-2 py-2 text-left text-sm font-semibold tabular-nums"
-              >
-                {fmtNumber(totalsByColumn[col.selectionId] ?? 0, 0)}g
-              </td>
-            ))}
-            <td className="border-t border-l border-border bg-secondary" />
-          </tr>
-        </tfoot>
       </table>
     </div>
   );
@@ -1489,17 +1502,14 @@ function MatrixColumnHeader({
   formulaName,
   formulaId,
   versionId,
-  multiplier,
   rnd,
   groupLabel,
   groupFirst = false,
   onResizeStart,
   onEdit,
   onSelect,
-  onEditPlan,
-  mouldLabel,
-  mouldCount,
   sourceLabel,
+  mergeAction,
 }: {
   id: string;
   /** 블렌드(합성) 포뮬라의 원본 열이면 묶음 제목 — 첫 열에만 글자를 그리고 모든 원본 열 위에 같은 색 띠를 둔다 */
@@ -1508,16 +1518,13 @@ function MatrixColumnHeader({
   formulaName: string;
   formulaId: string;
   versionId: string;
-  multiplier: number;
   /** R&D 실험 중인 버전 — 연두색으로 구분 */
   rnd: boolean;
   onResizeStart: (clientX: number) => void;
   onEdit: (() => void) | undefined;
   onSelect?: (() => void) | undefined;
-  onEditPlan?: (() => void) | undefined;
-  mouldLabel?: string | undefined;
-  mouldCount?: number | null | undefined;
   sourceLabel?: string | undefined;
+  mergeAction?: { count: number; merged: boolean; toggle: () => void } | undefined;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
@@ -1528,90 +1535,87 @@ function MatrixColumnHeader({
       style={{ transform: CSS.Transform.toString(transform), transition }}
       className={cn(
         // sticky 자체가 absolute 자식의 기준이 되므로 relative를 같이 쓰면 tailwind-merge가 sticky를 지워 헤더가 스크롤로 사라진다.
-        "sticky top-0 z-20 bg-secondary px-3 py-2 text-left align-bottom",
+        "sticky top-0 z-20 bg-secondary px-3 pb-2 pt-8 text-left align-top",
         groupLabel !== undefined
-          ? "shadow-[inset_0_3px_0_0_var(--color-foreground),inset_0_-1px_0_0_var(--color-border),inset_1px_0_0_0_var(--color-border)] pt-8"
+          ? "shadow-[inset_0_3px_0_0_var(--color-foreground),inset_0_-1px_0_0_var(--color-border),inset_1px_0_0_0_var(--color-border)]"
           : "shadow-[inset_0_-1px_0_0_var(--color-border),inset_1px_0_0_0_var(--color-border)]",
         groupFirst && "z-[25]",
         rnd && "!bg-[#DCF0C8]",
         isDragging && "z-40 bg-secondary",
       )}
     >
-      {groupFirst && (
-        <span className="label-caps pointer-events-none absolute left-3 top-1.5 whitespace-nowrap text-[11px] font-semibold text-foreground">
-          🔗 {groupLabel} · BLEND
-        </span>
-      )}
-      <div className="flex items-start gap-1">
-        {/* 열(포뮬라 버전) 드래그 손잡이 */}
+      <div className="absolute inset-x-2 top-1.5 flex items-center justify-between gap-2">
         <button
           type="button"
-          className="mt-0.5 shrink-0 cursor-grab touch-none text-muted-foreground hover:text-foreground active:cursor-grabbing"
+          aria-label="계량 칼럼 순서 변경"
+          className="cursor-grab touch-none text-muted-foreground hover:text-foreground active:cursor-grabbing"
           {...attributes}
           {...listeners}
         >
           <GripVertical className="h-3 w-3" />
         </button>
-        <div className="min-w-0 flex-1">
-          <p className="whitespace-nowrap text-xs leading-tight">
-            {rnd && <span className="label-caps mr-1 text-[10px] text-[#3F7A1F]">🧪 R&amp;D</span>}
-            {onSelect ? (
-              <button type="button" className="text-left hover:underline" onClick={onSelect}>
-                {formulaName}
-              </button>
-            ) : (
-              <Link
-                to="/formulas/$formulaId"
-                params={{ formulaId }}
-                search={{ version: versionId }}
-                className="underline-offset-2 hover:underline"
-                title="포뮬라 페이지 열기"
-                onPointerDown={(e) => e.stopPropagation()}
-              >
-                {formulaName}
-              </Link>
-            )}
-          </p>
-          {sourceLabel && (
-            <p className="truncate text-[10px] text-muted-foreground" title={sourceLabel}>
-              {sourceLabel}
-            </p>
-          )}
-          {onEditPlan ? (
+        <button
+          type="button"
+          aria-label={`Edit formula: ${formulaName}`}
+          className="label-caps border border-border px-1 py-0.5 text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-40"
+          onClick={onEdit}
+          disabled={!onEdit || rnd}
+          title={
+            onEdit && !rnd
+              ? "포뮬라 편집"
+              : rnd
+                ? "아래 R&D 편집기 사용"
+                : "개별 포뮬라 편집은 병합 해제 후 가능"
+          }
+        >
+          EDIT
+        </button>
+      </div>
+      {groupFirst && (
+        <p className="label-caps mb-1 truncate text-[10px] font-semibold" title={groupLabel}>
+          {groupLabel} · BLEND
+        </p>
+      )}
+      <div className="min-w-0">
+        <p className="break-words text-xs leading-tight">
+          {rnd && <span className="label-caps mr-1 text-[10px] text-[#3F7A1F]">🧪 R&amp;D</span>}
+          {onSelect ? (
             <button
               type="button"
-              className="text-left text-[11px] underline-offset-2 hover:underline"
-              onClick={onEditPlan}
+              className="max-w-full break-words text-left hover:underline"
+              onClick={onSelect}
             >
-              {[
-                mouldLabel ?? "몰드 선택",
-                mouldCount != null ? `${mouldCount}개` : null,
-                `×${fmtNumber(multiplier, 3)}`,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
+              {formulaName}
             </button>
           ) : (
-            <p className="label-caps whitespace-nowrap text-[11px] text-muted-foreground">
-              ×{fmtNumber(multiplier, 3)}
-            </p>
+            <Link
+              to="/formulas/$formulaId"
+              params={{ formulaId }}
+              search={{ version: versionId }}
+              className="underline-offset-2 hover:underline"
+              title="포뮬라 페이지 열기"
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              {formulaName}
+            </Link>
           )}
-        </div>
-        {/* 2026-10-14 사용자 요청: "work session에서 재료 추가하고 추가된 재료로 새로운 버전
-            포뮬라 추가 하는버튼" — 포뮬라 페이지로 이동하지 않고 이 열의 레시피를 바로
-            수정/새 버전 저장할 수 있게 하는 진입점. */}
-        {!rnd && (
-          <button
-            type="button"
-            className="label-caps shrink-0 px-1 py-0.5 text-[10px] text-muted-foreground hover:border hover:border-border hover:text-foreground"
-            onClick={onEdit}
-            disabled={!onEdit}
-            title={!onEdit ? "UNMERGE 후 개별 레시피를 수정하세요" : undefined}
-          >
-            EDIT FORMULA
-          </button>
+        </p>
+        {sourceLabel && (
+          <p className="truncate text-[10px] text-muted-foreground" title={sourceLabel}>
+            {sourceLabel}
+          </p>
         )}
       </div>
+      {mergeAction && (
+        <button
+          type="button"
+          className={cn(buttonClass, "mt-1 min-h-0 py-0.5 text-[11px]")}
+          aria-pressed={mergeAction.merged}
+          onClick={mergeAction.toggle}
+        >
+          {mergeAction.merged ? "병합 해제" : `같은 배합 ${mergeAction.count}건 병합`}
+        </button>
+      )}
       {/* 열 너비 조절 손잡이 — 오른쪽 경계를 드래그 */}
       <div
         role="separator"
@@ -3763,63 +3767,66 @@ export function DayWorkView({
       ),
     [ordered, mergedVersions],
   );
-  const columns: WeighingColumn[] = useMemo(
-    () =>
-      quantityGroups.flatMap((group, idx): WeighingColumn[] => {
-        const r = group.members[0]!;
-        const kids = group.members.length === 1 ? (childrenByParent.get(r.id) ?? []) : [];
-        if (kids.length > 0) {
-          const parentName =
-            r.formula_versions.formulas.components?.name ?? r.formula_versions.formulas.name;
-          return kids.map((k, ki) => ({
-            selectionId: k.id,
-            formulaVersionId: k.formula_version_id,
-            formulaId: k.formula_versions.formulas.id,
-            formulaName:
-              k.formula_versions.formulas.components?.name ?? k.formula_versions.formulas.name,
-            versionNumber: k.formula_versions.version_number,
-            multiplier: Number(k.multiplier),
-            sortOrder: idx + ki / 100,
-            sessionId: r.sessionId,
-            slot: r.slot ?? null,
-            groupKey: r.id,
-            groupLabel: parentName,
-            members: [
-              {
-                selectionId: k.id,
-                sessionId: r.sessionId,
-                label: labels[r.id] ?? r.sessionId.slice(0, 8),
-              },
-            ],
-          }));
-        }
-        return [
-          {
-            selectionId: r.id,
-            formulaVersionId: r.formula_version_id,
-            formulaId: r.formula_versions.formulas.id,
-            formulaName: `${r.formula_versions.formulas.components?.name ?? r.formula_versions.formulas.name}${group.members.length > 1 ? ` · MERGED ${group.members.length}` : ""}`,
-            versionNumber: r.formula_versions.version_number,
-            multiplier: group.multiplier,
-            sortOrder: idx,
-            sessionId: r.sessionId,
-            slot: r.slot ?? null,
-            mouldId: r.mould_id ?? null,
-            batterSplit: group.members.length === 1 ? r.batter_split_g : null,
-            baseMouldId: r.formula_versions.default_mould_id ?? null,
-            mouldQty: group.members.every((m) => m.mould_id === r.mould_id && m.mould_qty != null)
-              ? group.members.reduce((sum, m) => sum + Number(m.mould_qty), 0)
-              : null,
-            members: group.members.map((m) => ({
-              selectionId: m.id,
-              sessionId: m.sessionId,
-              label: labels[m.id] ?? m.sessionId.slice(0, 8),
-            })),
-          },
-        ];
-      }),
-    [quantityGroups, childrenByParent, labels],
-  );
+  const columns: WeighingColumn[] = useMemo(() => {
+    const mergeCounts = new Map<string, number>();
+    for (const { row } of ordered) {
+      mergeCounts.set(row.formula_version_id, (mergeCounts.get(row.formula_version_id) ?? 0) + 1);
+    }
+    return quantityGroups.flatMap((group, idx): WeighingColumn[] => {
+      const r = group.members[0]!;
+      const kids = group.members.length === 1 ? (childrenByParent.get(r.id) ?? []) : [];
+      if (kids.length > 0) {
+        const parentName =
+          r.formula_versions.formulas.components?.name ?? r.formula_versions.formulas.name;
+        return kids.map((k, ki) => ({
+          selectionId: k.id,
+          formulaVersionId: k.formula_version_id,
+          formulaId: k.formula_versions.formulas.id,
+          formulaName:
+            k.formula_versions.formulas.components?.name ?? k.formula_versions.formulas.name,
+          versionNumber: k.formula_versions.version_number,
+          multiplier: Number(k.multiplier),
+          sortOrder: idx + ki / 100,
+          sessionId: r.sessionId,
+          slot: r.slot ?? null,
+          groupKey: r.id,
+          groupLabel: parentName,
+          members: [
+            {
+              selectionId: k.id,
+              sessionId: r.sessionId,
+              label: labels[r.id] ?? r.sessionId.slice(0, 8),
+            },
+          ],
+        }));
+      }
+      return [
+        {
+          selectionId: r.id,
+          formulaVersionId: r.formula_version_id,
+          formulaId: r.formula_versions.formulas.id,
+          formulaName: `${r.formula_versions.formulas.components?.name ?? r.formula_versions.formulas.name}${group.members.length > 1 ? ` · MERGED ${group.members.length}` : ""}`,
+          versionNumber: r.formula_versions.version_number,
+          multiplier: group.multiplier,
+          sortOrder: idx,
+          sessionId: r.sessionId,
+          slot: r.slot ?? null,
+          mouldId: r.mould_id ?? null,
+          mergeCount: mergeCounts.get(r.formula_version_id) ?? 1,
+          batterSplit: group.members.length === 1 ? r.batter_split_g : null,
+          baseMouldId: r.formula_versions.default_mould_id ?? null,
+          mouldQty: group.members.every((m) => m.mould_id === r.mould_id && m.mould_qty != null)
+            ? group.members.reduce((sum, m) => sum + Number(m.mould_qty), 0)
+            : null,
+          members: group.members.map((m) => ({
+            selectionId: m.id,
+            sessionId: m.sessionId,
+            label: labels[m.id] ?? m.sessionId.slice(0, 8),
+          })),
+        },
+      ];
+    });
+  }, [quantityGroups, ordered, childrenByParent, labels]);
   const groups = useMemo(
     () =>
       buildWeighingGroups({
@@ -3984,6 +3991,7 @@ export function DayWorkView({
               onEditColumn={setEditingColumn}
               onSelectColumn={onSelectColumn}
               onColumnOrder={onColumnOrder}
+              onToggleMerge={onToggleMerge}
               onEditPlan={
                 onSelectColumn
                   ? (id) => setPlanId((previous) => (previous === id ? null : id))
