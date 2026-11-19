@@ -1,6 +1,5 @@
 import { ensureStandardProfile } from "@/lib/standard-profile";
 import { parseComponentPlan } from "@/lib/order-component-plan";
-import { openEditorOnMount } from "@/lib/open-editor-on-mount";
 import { invalidateProductionSync } from "@/lib/production-sync";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
