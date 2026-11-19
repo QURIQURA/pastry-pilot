@@ -295,7 +295,7 @@ function ComponentRow({
             <span className="min-w-0 font-medium">{name}</span>
             {warning}
           </div>
-          {mergedWith.length > 0 ? (
+          {mergedWith.length > 0 && (
             <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
               <span>
                 ⇄ {mergedWith.map((other) => other.order.order_number).join(" + ")}와 병합 · {day}
@@ -306,8 +306,8 @@ function ComponentRow({
                 </button>
               )}
             </div>
-          ) : (
-            !readOnly &&
+          )}
+          {!readOnly &&
             !actual?.done &&
             mergeCandidates.length > 0 && (
               <button
@@ -319,10 +319,9 @@ function ComponentRow({
                   toggle("merge");
                 }}
               >
-                ⇄ 같은 포뮬라 병합 ({mergeCandidates.length})
+                ⇄ {mergedWith.length > 0 ? "병합 대상 추가" : "같은 포뮬라 병합"} ({mergeCandidates.length})
               </button>
-            )
-          )}
+            )}
         </td>
         <td>
           {canEditMould ? (
@@ -437,7 +436,7 @@ function ComponentRow({
                     close();
                   }}
                 >
-                  {mergeDraft.length + 1}건 병합
+                  {mergedWith.length + mergeDraft.length + 1}건 병합
                 </button>
                 <button type="button" className={productionTableButtonClass} onClick={close}>
                   닫기

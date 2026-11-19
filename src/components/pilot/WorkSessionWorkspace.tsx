@@ -3673,7 +3673,12 @@ export function useProductionMerge(date: string) {
     if (!ids.length) return;
     const next = new Map(batchBySelection);
     if (ids.length > 1) {
-      const batchId = crypto.randomUUID();
+      // Extend an existing batch rather than replacing its identity or losing members.
+      const batchId = ids.map((id) => next.get(id)).find(Boolean) ?? crypto.randomUUID();
+      const joinedBatches = new Set(ids.map((id) => next.get(id)).filter(Boolean));
+      for (const [id, existingBatch] of next) {
+        if (joinedBatches.has(existingBatch)) next.set(id, batchId);
+      }
       ids.forEach((id) => next.set(id, batchId));
     } else {
       const batchId = next.get(ids[0]!);
