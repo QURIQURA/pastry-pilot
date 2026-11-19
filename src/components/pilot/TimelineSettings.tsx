@@ -11,6 +11,27 @@ import { buttonClass, inputClass } from "./ui";
 export type TimelineRange = { mode: "planner" | "custom"; start: string; end: string };
 
 const RANGE_KEY = "pilot.production.timelineRange.v1";
+const PLANNER_URL_KEY = "pilot.production.plannerUrl.v1";
+export const PLANNER_APP_URL = "https://wann-planner.lovable.app";
+
+function usePlannerUrl(): [string, (next: string) => void] {
+  const [url, setUrl] = useState(() => {
+    try {
+      return localStorage.getItem(PLANNER_URL_KEY) || PLANNER_APP_URL;
+    } catch {
+      return PLANNER_APP_URL;
+    }
+  });
+  const update = (next: string) => {
+    setUrl(next);
+    try {
+      localStorage.setItem(PLANNER_URL_KEY, next);
+    } catch {
+      // Per-device convenience only.
+    }
+  };
+  return [url, update];
+}
 const DEFAULT_RANGE: TimelineRange = { mode: "planner", start: "08:00", end: "18:00" };
 
 export function useTimelineRange(): [TimelineRange, (next: TimelineRange) => void] {
@@ -67,6 +88,9 @@ export function TimelineSettingsPanel({
   work: { start: number; end: number }[];
   onClose: () => void;
 }) {
+  const [plannerUrl, setPlannerUrl] = usePlannerUrl();
+  const [plannerOpen, setPlannerOpen] = useState(false);
+  const safePlannerUrl = plannerUrl.startsWith("https://") ? plannerUrl : PLANNER_APP_URL;
   return (
     <div className="mt-2 space-y-3 border border-border bg-background p-3 text-xs">
       <div className="flex items-center justify-between gap-2">
@@ -141,9 +165,63 @@ export function TimelineSettingsPanel({
           ))}
         </div>
       )}
-      <p className="text-[11px] text-muted-foreground">
-        가용시간 자체는 Planner가 관리해요. 바꾸려면 Planner에서 수정하세요.
-      </p>
+      <div className="space-y-1.5 border-t border-border pt-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="label-caps text-[11px]">Planner에서 가용시간 수정</p>
+          <button
+            type="button"
+            className={buttonClass}
+            aria-expanded={plannerOpen}
+            onClick={() => {
+              // Closing the Planner window reloads availability so the timeline reflects edits.
+              if (plannerOpen) void query.refetch();
+              setPlannerOpen((open) => !open);
+            }}
+          >
+            {plannerOpen ? "Planner 닫고 새로고침" : "Planner 열기"}
+          </button>
+          <a
+            href={safePlannerUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-[11px] underline"
+          >
+            새 창 ↗
+          </a>
+          <button
+            type="button"
+            className="text-[11px] underline"
+            onClick={() => void query.refetch()}
+          >
+            ↻ 가용시간 다시 불러오기
+          </button>
+        </div>
+        {plannerOpen && (
+          <>
+            <iframe
+              title="WANN Planner"
+              src={safePlannerUrl}
+              className="h-[70vh] min-h-[420px] w-full border border-border bg-background"
+            />
+            <label className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+              Planner 주소
+              <input
+                aria-label="Planner 주소"
+                className={cn(inputClass, "min-w-0 flex-1")}
+                defaultValue={plannerUrl}
+                onBlur={(e) => {
+                  const next = e.target.value.trim();
+                  if (next.startsWith("https://")) setPlannerUrl(next);
+                }}
+              />
+            </label>
+            <p className="text-[11px] text-muted-foreground">
+              처음 한 번은 이 창 안에서 Planner 로그인이 필요할 수 있어요. 창이 비어 있으면 새
+              창으로 여세요. 수정한 뒤 닫으면 타임라인 가용시간을 다시 불러와요.
+            </p>
+          </>
+        )}
+      </div>
     </div>
   );
 }
