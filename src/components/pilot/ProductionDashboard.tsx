@@ -1170,7 +1170,7 @@ export function ProductionDashboard() {
                   ))}
                 </div>
               )}
-              <div className="flex min-w-0 flex-1 items-start gap-2 overflow-x-auto">
+              <div className="flex min-w-0 flex-1 items-start gap-0 overflow-x-auto">
                 {availableSegments.map((segment) => {
                   const start = toMin(segment.start);
                   const duration = toMin(segment.end) - start;
@@ -1178,15 +1178,25 @@ export function ProductionDashboard() {
                   return (
                     <div
                       key={segment.start}
-                      className="min-w-44 flex-1 space-y-1"
-                      style={{ flexGrow: duration }}
+                      className="min-w-0 shrink-0 space-y-1"
+                      style={{ flexBasis: `${(duration / availableSegments.reduce((total, item) => total + Math.max(0, toMin(item.end) - toMin(item.start)), 0)) * 100}%` }}
                     >
                       <div className="flex justify-between font-mono text-[11px]">
                         <span>{segment.start}</span>
                         <span>{segment.end}</span>
                       </div>
                       {timelineLanes.map((tab) => (
-                        <div key={tab} className="relative h-7 bg-muted">
+                        <div
+                          key={tab}
+                          className={cn(
+                            "relative h-7 border-r border-background",
+                            "state" in segment && segment.state === "available" ? "bg-[#A9B79B]/30" :
+                            "state" in segment && segment.state === "busy" ? "bg-[#BDBDB8]/60" :
+                            "state" in segment && segment.state === "check" ? "bg-[#E8DFA8]/50" :
+                            "state" in segment && segment.state === "unknown" ? "bg-muted" : "bg-muted",
+                          )}
+                          title={"state" in segment ? `${segment.start}–${segment.end} · ${segment.state}` : undefined}
+                        >
                           {productionRecords.flatMap((record) => {
                             if (!record.start || recordLane(record) !== tab) return [];
                             const from = Math.max(start, recordMinute(record.start));
