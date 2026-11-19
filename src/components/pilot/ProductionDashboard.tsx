@@ -392,15 +392,13 @@ export function ProductionDashboard() {
   const tasksById = new Map(
     taskQueries.flatMap((query) => (query.data ?? []).map((task) => [task.id, task] as const)),
   );
-  const { mergedVersions, toggleMerge } = useProductionMerge(
-    dayWorkItems.map((item) => item.rowId),
-  );
+  const { batchBySelection, setBatch } = useProductionMerge(date);
   const tabByRow = new Map(
     tabItems.flatMap((items, index) => items.map((item) => [item.rowId, index] as const)),
   );
   const groupKeyForRow = (row: DashboardComponentRow) =>
-    mergedVersions.has(row.formulaVersionId)
-      ? `${tabByRow.get(row.id)}:${row.formulaVersionId}`
+    batchBySelection.has(row.id)
+      ? `${tabByRow.get(row.id)}:${row.formulaVersionId}:${batchBySelection.get(row.id)}`
       : row.id;
   const stepKey = (block: WorkBlock) => block.step_name ?? `part-${block.part_no}`;
   const individualRecords = dayBlocks
@@ -514,9 +512,9 @@ export function ProductionDashboard() {
     const byKey = new Map<string, WorkBlock[]>();
     for (const b of dayBlocks) {
       const row = rowById.get(b.work_session_formula_version_id);
-      if (!row || !mergedVersions.has(row.formulaVersionId)) continue;
+      if (!row || !batchBySelection.has(row.id)) continue;
       const tab = tabItems.findIndex((items) => items.some((item) => item.rowId === row.id));
-      const key = `${tab}|${row.formulaVersionId}|${stepKey(b)}`;
+      const key = `${tab}|${row.formulaVersionId}|${batchBySelection.get(row.id)}|${stepKey(b)}`;
       byKey.set(key, [...(byKey.get(key) ?? []), b]);
     }
     const hidden = new Set<string>();
@@ -536,7 +534,7 @@ export function ProductionDashboard() {
       });
     }
     return { hidden, primaries };
-  }, [dayBlocks, rowById, mergedVersions, tabItems]);
+  }, [dayBlocks, rowById, batchBySelection, tabItems]);
   const visibleBlocks = useMemo(
     () => dayBlocks.filter((b) => !mergeGroups.hidden.has(b.id)),
     [dayBlocks, mergeGroups],
@@ -1233,8 +1231,8 @@ export function ProductionDashboard() {
                   part="WORK_VIEW"
                   key={`${date}-${activeTab}`}
                   items={activeItems}
-                  mergedVersions={mergedVersions}
-                  onToggleMerge={toggleMerge}
+                  batchBySelection={batchBySelection}
+                  onSetBatch={setBatch}
                   labels={Object.fromEntries(rows.map((row) => [row.id, row.order.order_number]))}
                   onSelectColumn={focusRecord}
                   onColumnOrder={(ids) => {

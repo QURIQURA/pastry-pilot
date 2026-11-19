@@ -22,16 +22,15 @@ export function applySavedQuantities<T extends { id: string; multiplier: number 
 
 export function groupProductionSelections<T extends QuantitySelection>(
   rows: T[],
-  mergedVersions: ReadonlySet<string>,
+  batchBySelection: ReadonlyMap<string, string>,
 ): { key: string; members: T[]; multiplier: number }[] {
   const groups = new Map<string, { key: string; members: T[]; multiplier: number }>();
   const seen = new Set<string>();
   for (const row of rows) {
     if (seen.has(row.id)) continue; // Split timeline blocks still represent one quantity.
     seen.add(row.id);
-    const key = mergedVersions.has(row.formula_version_id)
-      ? `version:${row.formula_version_id}`
-      : `selection:${row.id}`;
+    const batch = batchBySelection.get(row.id);
+    const key = batch ? `batch:${row.formula_version_id}:${batch}` : `selection:${row.id}`;
     const group = groups.get(key) ?? { key, members: [], multiplier: 0 };
     group.members.push(row);
     group.multiplier += Number(row.multiplier);
@@ -96,4 +95,30 @@ export function roundIngredientGrams(lines: { id: string; grams: number }[]): Ma
   const remainder = target - ordered.reduce((sum, line) => sum + line.floor, 0);
   ordered.sort((a, b) => b.grams - b.floor - (a.grams - a.floor) || a.id.localeCompare(b.id));
   return new Map(ordered.map((line, index) => [line.id, line.floor + Number(index < remainder)]));
+}
+
+/** For equal fills, round each mould once and scale the whole batch to match.
+ * A near-reference legacy quantity can be one gram short per mould. */
+export function mouldBatchGrams(
+  rawGrams: number,
+  count: number,
+  referenceGrams?: number | null,
+  saved?: number[] | null,
+): number {
+  if (!Number.isInteger(count) || count < 1 || !Number.isFinite(rawGrams) || rawGrams <= 0)
+    return rawGrams;
+  if (saved && matchesMouldSplit(saved, count, rawGrams)) return Math.round(rawGrams);
+  const perMould = rawGrams / count;
+  const reference = Number(referenceGrams);
+  const rounded =
+    reference > 0 && Math.abs(reference - perMould) <= 1
+      ? Math.round(reference)
+      : Math.round(perMould);
+  return rounded > 0 ? rounded * count : rawGrams;
+}
+
+export function formatMouldSplit(weights: number[]): string {
+  const counts = new Map<number, number>();
+  for (const weight of weights) counts.set(weight, (counts.get(weight) ?? 0) + 1);
+  return [...counts].map(([weight, count]) => `${weight}g × ${count}`).join(" + ") || "—";
 }

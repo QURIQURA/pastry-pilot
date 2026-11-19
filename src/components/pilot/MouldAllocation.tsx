@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { WorkSessionFormulaVersionRow } from "@/lib/queries";
-import { equalMouldSplit, matchesMouldSplit } from "@/lib/production-quantity";
+import { equalMouldSplit, formatMouldSplit, matchesMouldSplit } from "@/lib/production-quantity";
 import { buttonClass, inputClass } from "./ui";
 
 export function MouldAllocation({
@@ -97,7 +97,7 @@ export function MouldAllocation({
         </form>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-mono">{initial.map((value) => `${value}g`).join(" + ")}</span>
+          <span className="font-mono">{formatMouldSplit(initial)}</span>
           {count > 1 && (
             <button
               type="button"
