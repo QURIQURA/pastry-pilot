@@ -611,6 +611,7 @@ export function AddFormulaVersionForm({
   productId = null,
   productSizeId = null,
   addOnSelect = false,
+  cakeSizeId = null,
 }: {
   sessionId: string;
   nextSort: number;
@@ -622,8 +623,10 @@ export function AddFormulaVersionForm({
   productId?: string | null;
   productSizeId?: string | null;
   addOnSelect?: boolean;
+  cakeSizeId?: string | null;
 }) {
   const formulas = useQuery(formulasQuery());
+  const queryClient = useQueryClient();
   // 2026-10-12 사용자 요청: CORE(SHEET/CREAM/FILLING) 슬롯에서 추가할 때는 TECHNIQUE
   // CATEGORIES에서 그 슬롯으로 분류된 COMPONENT의 FORMULA만 보여준다. DECORATIVE(자유 추가)는
   // 기존처럼 전체를 다 보여준다.
@@ -702,6 +705,15 @@ export function AddFormulaVersionForm({
         throw new Error("생산 수량을 올바르게 입력해 주세요.");
       }
       const plan = parseComponentPlan(String(quantity), "");
+      // Pass the finished mould explicitly for a ×1 sheet selection. The legacy
+      // insert trigger otherwise derives a different multiplier from nominal capacities.
+      const finishedMouldId = picked && slot === "SHEET" && cakeSizeId
+        ? (await queryClient.ensureQueryData(cakeSizesQuery())).find((size) => size.id === cakeSizeId)
+          ?.sheet_mould_id ?? null
+        : null;
+      const mouldId = quantityMode === "MOULD" ? planMouldId : finishedMouldId;
+      const mouldCount = quantityMode === "MOULD" ? Number(planMouldQty) : finishedMouldId ? 1 : null;
+
       // 2026-10-07 사용자 요청: 같은 FORMULA VERSION도 이 WORK SESSION에 중복으로 추가할 수
       // 있다(예: 같은 레시피를 다른 몰드/배치로 각각) — 더 이상 막지 않는다.
       const user_id = await currentUserId();
@@ -715,10 +727,10 @@ export function AddFormulaVersionForm({
           multiplier: plan.multiplier,
           target_quantity_g: plan.target_quantity_g,
           version_pinned: true,
-          mould_id: quantityMode === "MOULD" ? planMouldId : null,
-          mould_qty: quantityMode === "MOULD" ? Number(planMouldQty) : null,
-          capacity_id: quantityMode === "MOULD" ? planMouldId : null,
-          capacity_qty: quantityMode === "MOULD" ? Number(planMouldQty) : null,
+          mould_id: mouldId,
+          mould_qty: mouldCount,
+          capacity_id: mouldId,
+          capacity_qty: mouldCount,
           base_weight_id: quantityMode === "BASE" ? planBaseId : null,
           base_weight_qty: quantityMode === "BASE" ? Number(planBaseQty) : null,
           plan_ingredient_id: quantityMode === "ING" ? planIngredientId : null,

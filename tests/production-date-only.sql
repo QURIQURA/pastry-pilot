@@ -26,4 +26,29 @@ begin
     null;
   end;
 end $$;
+-- The order sheet trigger may set a derived multiplier only when the mould is inferred.
+do $$
+declare
+  owner_id uuid := '00000000-0000-0000-0000-0000000000b2';
+  size_id uuid := gen_random_uuid();
+  order_id uuid := gen_random_uuid();
+  session_id uuid := gen_random_uuid();
+  version_id uuid := gen_random_uuid();
+  base_id uuid := gen_random_uuid();
+  finished_id uuid := gen_random_uuid();
+  saved_multiplier numeric;
+begin
+  insert into public.moulds values (base_id, owner_id, 340), (finished_id, owner_id, 680);
+  insert into public.cake_sizes values (size_id, owner_id, finished_id);
+  insert into public.orders values (order_id, owner_id, size_id);
+  insert into public.work_sessions values (session_id, owner_id, order_id, size_id);
+  insert into public.formula_versions values (version_id, owner_id, base_id);
+  insert into public.work_session_formula_versions
+    (user_id, work_session_id, formula_version_id, slot, mould_id, mould_qty, multiplier)
+  values (owner_id, session_id, version_id, 'SHEET', finished_id, 1, 1)
+  returning multiplier into saved_multiplier;
+  if saved_multiplier is distinct from 1 then
+    raise exception 'An explicit finished mould must preserve the requested recipe batch';
+  end if;
+end $$;
 rollback;
