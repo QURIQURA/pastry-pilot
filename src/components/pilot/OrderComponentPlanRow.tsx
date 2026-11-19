@@ -21,7 +21,7 @@ import { resolveSlotGroup } from "@/lib/technique";
 import { sumBaseGrams } from "@/lib/work-session";
 import { fmtNumber, toGrams } from "@/lib/formula";
 import { ingredientDisplayName } from "@/lib/pilot";
-import { mouldAbbr, mouldMultiplier, mouldQty } from "@/lib/component-size";
+import { mouldAbbr, mouldMultiplierForRecipe, mouldQtyForRecipe } from "@/lib/component-size";
 import { invalidateProductionSync } from "@/lib/production-sync";
 import { syncWorkSessionToPlanner } from "@/lib/work-session";
 import { buttonClass, inputClass, selectClass } from "./ui";
@@ -182,13 +182,13 @@ export function OrderComponentPlanRow({
   const baseMould = (moulds.data ?? []).find((m) => m.id === defaultMouldId);
   const targetMould = (moulds.data ?? []).find((m) => m.id === draft.mould);
   const mouldMode = Boolean(baseMould?.reference_weight_g);
-  const derivedQty = targetMould ? (mouldQty(row.multiplier, baseMould, targetMould) ?? 1) : 1;
+  const derivedQty = targetMould ? (mouldQtyForRecipe(row.multiplier, base, targetMould) ?? 1) : 1;
   const qtyText = draft.qty !== "" ? draft.qty : String(derivedQty);
   const autoMode = draft.mould ? "MOULD" : draft.bw ? "BASE" : draft.ing ? "ING" : "MULT";
   const mode = draft.mode || autoMode;
   const useMould = mode === "MOULD" && mouldMode && Boolean(targetMould?.reference_weight_g);
   const effectiveMultiplier = useMould
-    ? (mouldMultiplier(Number(qtyText), baseMould, targetMould) ?? Number.NaN)
+    ? (mouldMultiplierForRecipe(Number(qtyText), base, targetMould) ?? Number.NaN)
     : Number(draft.multiplier);
   // 기준중량 기준(가나슈/크림/필링 등 몰드 없는 컴포넌트): 설정의 기준중량 × 개수 = 목표 중량 → 배수 자동 계산.
   const baseWeights = useQuery(baseWeightsQuery());
@@ -376,7 +376,7 @@ export function OrderComponentPlanRow({
   const savedVersion = (versions.data ?? []).find((v) => v.id === draft.version);
   const versionText = `V${savedVersion?.version_number ?? row.formula_versions.version_number}${""}`;
   const productionText =
-    ingredients.isSuccess && preview ? ` · 생산 ${fmtNumber(preview.production)}g` : "";
+    ingredients.isSuccess && preview ? ` · 생산 ${fmtNumber(preview.production, 0)}g` : "";
   let planText: string;
   if (mode === "ING" && ingLine && Number.isFinite(ingMultiplier))
     planText = `재료 기준 — ${ingLine.name} ${fmtNumber(ingTarget)}g → 레시피 ×${fmtNumber(ingMultiplier, 4)}`;
@@ -673,7 +673,7 @@ export function OrderComponentPlanRow({
           )}
           {ingredients.isSuccess && preview && (
             <p className="font-mono text-[11px]">
-              기본 {fmtNumber(base)}g × {fmtNumber(effectiveMultiplierAll, 4)} = 생산{" "}
+              기본 {fmtNumber(base, 0)}g × {fmtNumber(effectiveMultiplierAll, 4)} = 생산{" "}
               {fmtNumber(preview.production)}g
             </p>
           )}
