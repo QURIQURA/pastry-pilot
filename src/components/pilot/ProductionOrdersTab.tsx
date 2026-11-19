@@ -54,6 +54,7 @@ export function ProductionOrdersTab({ completed = false }: { completed?: boolean
   const dietaryOf = useOrderDietaryNames();
   const [sessionErrors, setSessionErrors] = useState<Record<string, string>>({});
   const [mode, setMode] = useState<"pick" | "copy" | "new">("pick");
+  const [orderTypeTab, setOrderTypeTab] = useState<"ALL" | "CAKE" | "POPUP">("ALL");
 
   const firstBlockByRow = useMemo(() => {
     const map = new Map<string, { date: string; time: string; count: number; lastDate: string }>();
@@ -179,6 +180,10 @@ export function ProductionOrdersTab({ completed = false }: { completed?: boolean
         </button>
       </div>
     );
+  const visibleOrders = list.filter(({ order }) =>
+    orderTypeTab === "ALL" || (orderTypeTab === "POPUP" ? order.order_kind === "POPUP" : order.order_kind !== "POPUP"),
+  );
+
   if (list.length === 0) {
     return (
       <p className="font-mono text-xs text-muted-foreground">
@@ -207,8 +212,19 @@ export function ProductionOrdersTab({ completed = false }: { completed?: boolean
           {(createSession.error as Error).message}
         </p>
       )}
+      <div className="flex flex-wrap gap-1 border-b border-border pb-2" role="tablist" aria-label="오더 종류">
+        {(["ALL", "CAKE", "POPUP"] as const).map((tab) => (
+          <button key={tab} type="button" role="tab" aria-selected={orderTypeTab === tab}
+            className={cn(buttonClass, "px-3 py-1 text-xs", orderTypeTab === tab && "bg-secondary font-semibold")}
+            onClick={() => setOrderTypeTab(tab)}>
+            {tab === "ALL" ? "ALL ORDERS" : tab === "CAKE" ? "CAKE ORDERS" : "POP-UP ORDERS"}
+            <span className="ml-1 opacity-60">{list.filter(({ order }) => tab === "ALL" || (tab === "POPUP" ? order.order_kind === "POPUP" : order.order_kind !== "POPUP")).length}</span>
+          </button>
+        ))}
+      </div>
+      {visibleOrders.length === 0 && <p className="text-xs text-muted-foreground">이 유형의 오더가 없어요.</p>}
       <div className="grid grid-cols-1 gap-3">
-        {list.map(({ order, rows, session, ambiguousSession }) =>
+        {visibleOrders.map(({ order, rows, session, ambiguousSession }) =>
           order.order_kind === "POPUP" ? (
             <PopupProductionCard key={order.id} order={order} />
           ) : (
