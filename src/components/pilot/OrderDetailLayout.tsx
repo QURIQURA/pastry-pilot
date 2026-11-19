@@ -1,7 +1,8 @@
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { buttonClass, primaryButtonClass } from "./ui";
 
-export const ORDER_DETAIL_TABS = ["VISUALS", "PRODUCTION DETAIL", "ORDER DETAIL"] as const;
+export const ORDER_DETAIL_TABS = ["ORDER DETAIL", "PRODUCTION DETAIL", "VISUALS"] as const;
 export type OrderDetailTab = (typeof ORDER_DETAIL_TABS)[number];
 
 export function OrderDetailLayout({
@@ -49,6 +50,50 @@ export function OrderDetailLayout({
         ))}
       </nav>
       {children}
+    </div>
+  );
+}
+
+export function OrderDetailActions({
+  status,
+  sessionId,
+  onSave,
+  onCancel,
+  canSave,
+  canCancel,
+  children,
+}: {
+  status: ReactNode;
+  sessionId?: string | undefined;
+  onSave: () => void;
+  onCancel: () => void;
+  canSave: boolean;
+  canCancel: boolean;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="sticky bottom-0 z-10 space-y-2 border border-border bg-card p-3">
+      {children}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        {status}
+        <div className="flex flex-wrap gap-2">
+          {sessionId ? (
+            <Link to="/production/$sessionId" params={{ sessionId }} className={buttonClass}>
+              WORK SESSION
+            </Link>
+          ) : (
+            <Link to="/production" search={{ tab: "ORDERS" }} className={buttonClass}>
+              PRODUCTION
+            </Link>
+          )}
+          <button type="button" className={buttonClass} disabled={!canCancel} onClick={onCancel}>
+            취소
+          </button>
+          <button type="button" className={primaryButtonClass} disabled={!canSave} onClick={onSave}>
+            저장
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

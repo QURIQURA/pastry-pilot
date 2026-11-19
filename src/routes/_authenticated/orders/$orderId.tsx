@@ -1,4 +1,8 @@
-import { OrderDetailLayout, type OrderDetailTab } from "@/components/pilot/OrderDetailLayout";
+import {
+  OrderDetailActions,
+  OrderDetailLayout,
+  type OrderDetailTab,
+} from "@/components/pilot/OrderDetailLayout";
 import { PopupOrderWorkspace } from "@/components/pilot/PopupOrderWorkspace";
 import { ComponentPlanReadout } from "@/components/pilot/ComponentPlanReadout";
 import { toast } from "sonner";
@@ -212,9 +216,7 @@ function OrderDetailPage() {
   // 2026-10-15 사용자 재요청: "visuals가 먼저 뜨게해줘" — 탭 순서도 VISUALS를 앞으로, 페이지
   // 진입 시 기본 선택 탭도 VISUALS로.
   // 2026-11-05 사용자 요청: "Visual/Production detail/Order detail 이렇게 따로 탭 만들자"
-  const [activeTab, setActiveTab] = useState<OrderDetailTab>(
-    "ORDER DETAIL",
-  );
+  const [activeTab, setActiveTab] = useState<OrderDetailTab>("ORDER DETAIL");
 
   const [orderNumber, setOrderNumber] = useState("");
   const [customerId, setCustomerId] = useState("");
@@ -441,7 +443,11 @@ function OrderDetailPage() {
     assign("dietaryBuildId", setDietaryBuildId, o.dietary_build_id ?? "");
     assign("audience", setAudience, o.audience ?? "");
     assign("deliveryAddress", setDeliveryAddress, o.delivery_address ?? "");
-    assign("fulfilmentMethod", setFulfilmentMethod, o.fulfilment_method === "DELIVERY" ? "DELIVERY" : "PICKUP");
+    assign(
+      "fulfilmentMethod",
+      setFulfilmentMethod,
+      o.fulfilment_method === "DELIVERY" ? "DELIVERY" : "PICKUP",
+    );
     assign("makerSatisfaction", setMakerSatisfaction, o.maker_satisfaction ?? "");
     assign("customerSatisfaction", setCustomerSatisfaction, o.customer_satisfaction ?? "");
     assign("customerFeedback", setCustomerFeedback, o.customer_feedback ?? "");
@@ -709,7 +715,8 @@ function OrderDetailPage() {
     <OrderDetailLayout
       tab={activeTab}
       onTabChange={setActiveTab}
-      identity={<>
+      identity={
+        <>
           <input
             className="label-caps w-full max-w-[16rem] border-0 bg-transparent p-0 text-lg text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
             value={orderNumber}
@@ -720,8 +727,10 @@ function OrderDetailPage() {
           <p className="font-mono text-xs uppercase text-muted-foreground">
             CREATED {formatDateTime(order.data.created_at)}
           </p>
-      </>}
-      actions={<div className="flex items-center gap-2">
+        </>
+      }
+      actions={
+        <div className="flex items-center gap-2">
           {/* 2026-10-06 사용자 요청: Status 색상은 SETTINGS의 ORDER STATUS COLORS 설정을
               그대로 따라가도록 — 드롭다운 옆에 현재 선택된 단계의 색을 점으로 보여준다. */}
           <span
@@ -746,7 +755,8 @@ function OrderDetailPage() {
             error={save.error}
             onRetry={() => void retrySave()}
           />
-        </div>}
+        </div>
+      }
     >
       {activeTab === "VISUALS" ? (
         <div className="space-y-3">
@@ -926,7 +936,11 @@ function OrderDetailPage() {
                 />
               </Field>
               <Field label="FULFILMENT METHOD">
-                <select className={inputClass} value={fulfilmentMethod} onChange={(e) => setFulfilmentMethod(e.target.value as "PICKUP" | "DELIVERY")}>
+                <select
+                  className={inputClass}
+                  value={fulfilmentMethod}
+                  onChange={(e) => setFulfilmentMethod(e.target.value as "PICKUP" | "DELIVERY")}
+                >
                   <option value="PICKUP">Pickup — customer collects</option>
                   <option value="DELIVERY">Delivery — we deliver</option>
                 </select>
@@ -934,7 +948,11 @@ function OrderDetailPage() {
               <Field label={fulfilmentMethod === "PICKUP" ? "PICKUP LOCATION" : "DELIVERY ADDRESS"}>
                 <AutoGrowTextarea
                   className={inputClass}
-                  placeholder={fulfilmentMethod === "PICKUP" ? "Pickup location (optional)" : "Delivery address"}
+                  placeholder={
+                    fulfilmentMethod === "PICKUP"
+                      ? "Pickup location (optional)"
+                      : "Delivery address"
+                  }
                   value={deliveryAddress}
                   onChange={(e) => setDeliveryAddress(e.target.value)}
                 />
@@ -1096,11 +1114,13 @@ function OrderDetailPage() {
                   onChange={(e) => setProductLine(e.target.value as OrderProductLineKey | "")}
                 >
                   <option value="">— SELECT —</option>
-                  {productLines.filter((p) => p.active || p.key === productLine).map((p) => (
-                    <option key={p.key} value={p.key}>
-                      {p.label}
-                    </option>
-                  ))}
+                  {productLines
+                    .filter((p) => p.active || p.key === productLine)
+                    .map((p) => (
+                      <option key={p.key} value={p.key}>
+                        {p.label}
+                      </option>
+                    ))}
                 </select>
                 <p className="mt-1 text-xs text-muted-foreground">
                   On CONFIRMED, a project is created/synced to this product line in the WANN Weekly
@@ -1402,25 +1422,35 @@ function OrderDetailPage() {
         </>
       )}
 
-      <div className="border border-border bg-card p-3">
-        <div className="flex flex-wrap items-center gap-2">
+      <OrderDetailActions
+        sessionId={workSession.data?.id}
+        canSave={isDirty && !save.isPending}
+        canCancel={isDirty && !save.isPending}
+        onSave={handleSave}
+        onCancel={() => {
+          hydrationRef.current = { previous: "", draft: "" };
+          hydrateFromOrder(order.data!);
+          setDietaryTagIds(null);
+        }}
+        status={
           <AutosaveStatus
             saving={save.isPending}
             waiting={autosave.waiting}
             error={save.error}
             onRetry={() => void retrySave()}
           />
-          <button
-            type="button"
-            className={buttonClass}
-            onClick={() => {
-              if (confirm("DELETE THIS ORDER?")) remove.mutate();
-            }}
-          >
-            DELETE ORDER
-          </button>
-        </div>
-      </div>
+        }
+      >
+        <button
+          type="button"
+          className={buttonClass}
+          onClick={() => {
+            if (confirm("DELETE THIS ORDER?")) remove.mutate();
+          }}
+        >
+          DELETE ORDER
+        </button>
+      </OrderDetailActions>
     </OrderDetailLayout>
   );
 }

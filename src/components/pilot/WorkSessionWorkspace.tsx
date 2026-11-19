@@ -1,3 +1,4 @@
+import { OrderComponentPlanRow } from "./OrderComponentPlanRow";
 import { MouldAllocation } from "@/components/pilot/MouldAllocation";
 import { ensureStandardProfile } from "@/lib/standard-profile";
 import { parseComponentPlan } from "@/lib/order-component-plan";
@@ -53,6 +54,8 @@ import {
   groupProductionSelections,
   rescaleProductionSelections,
   roundIngredientGrams,
+  equalMouldSplit,
+  matchesMouldSplit,
 } from "@/lib/production-quantity";
 import { resolveSlotGroup } from "@/lib/technique";
 import { mouldAbbr, mouldQty, mouldMultiplierForRecipe } from "@/lib/component-size";
@@ -696,7 +699,9 @@ export function AddFormulaVersionForm({
     mutationFn: async (picked?: (typeof formulaList)[number]) => {
       const selectedFormula = picked ?? formula;
       const selectedVersionId = picked
-        ? [...(picked.formula_versions ?? [])].sort((a, b) => b.version_number - a.version_number)[0]?.id
+        ? [...(picked.formula_versions ?? [])].sort(
+            (a, b) => b.version_number - a.version_number,
+          )[0]?.id
         : versionId;
       const quantityMode = picked ? "MULT" : planMode;
       const quantity = picked ? 1 : multiplierNum;
@@ -707,12 +712,15 @@ export function AddFormulaVersionForm({
       const plan = parseComponentPlan(String(quantity), "");
       // Pass the finished mould explicitly for a ×1 sheet selection. The legacy
       // insert trigger otherwise derives a different multiplier from nominal capacities.
-      const finishedMouldId = picked && slot === "SHEET" && cakeSizeId
-        ? (await queryClient.ensureQueryData(cakeSizesQuery())).find((size) => size.id === cakeSizeId)
-          ?.sheet_mould_id ?? null
-        : null;
+      const finishedMouldId =
+        picked && slot === "SHEET" && cakeSizeId
+          ? ((await queryClient.ensureQueryData(cakeSizesQuery())).find(
+              (size) => size.id === cakeSizeId,
+            )?.sheet_mould_id ?? null)
+          : null;
       const mouldId = quantityMode === "MOULD" ? planMouldId : finishedMouldId;
-      const mouldCount = quantityMode === "MOULD" ? Number(planMouldQty) : finishedMouldId ? 1 : null;
+      const mouldCount =
+        quantityMode === "MOULD" ? Number(planMouldQty) : finishedMouldId ? 1 : null;
 
       // 2026-10-07 사용자 요청: 같은 FORMULA VERSION도 이 WORK SESSION에 중복으로 추가할 수
       // 있다(예: 같은 레시피를 다른 몰드/배치로 각각) — 더 이상 막지 않는다.
@@ -806,27 +814,123 @@ export function AddFormulaVersionForm({
       {!addOnSelect && versionId && (
         <div className="space-y-2 border border-border p-3">
           <Field label="입력 방식">
-            <select className={selectClass} value={planMode} onChange={(e) => setPlanMode(e.target.value as typeof planMode)}>
+            <select
+              className={selectClass}
+              value={planMode}
+              onChange={(e) => setPlanMode(e.target.value as typeof planMode)}
+            >
               <option value="MULT">배수</option>
-              <option value="MOULD" disabled={!baseMould?.reference_weight_g}>몰드 기준</option>
+              <option value="MOULD" disabled={!baseMould?.reference_weight_g}>
+                몰드 기준
+              </option>
               <option value="BASE">기본중량 기준</option>
               <option value="ING">재료 기준</option>
             </select>
           </Field>
-          {planMode === "MULT" && <Field label="레시피 배수"><input className={inputClass} type="number" min="0.001" step="any" value={planMultiplier} onChange={(e) => setPlanMultiplier(e.target.value)} /></Field>}
-          {planMode === "MOULD" && <div className="flex flex-wrap gap-2">
-            <Field label="목표 몰드"><select className={selectClass} value={planMouldId} onChange={(e) => setPlanMouldId(e.target.value)}><option value="">몰드 선택…</option>{(allMoulds.data ?? []).filter((m) => m.reference_weight_g).map((m) => <option key={m.id} value={m.id}>{mouldAbbr(m)}</option>)}</select></Field>
-            <Field label="몰드 개수"><input className={inputClass} type="number" min="1" step="1" value={planMouldQty} onChange={(e) => setPlanMouldQty(e.target.value)} /></Field>
-          </div>}
-          {planMode === "BASE" && <div className="flex flex-wrap gap-2">
-            <Field label="기본중량"><select className={selectClass} value={planBaseId} onChange={(e) => setPlanBaseId(e.target.value)}><option value="">기본중량 선택…</option>{(baseWeights.data ?? []).map((b) => <option key={b.id} value={b.id}>{b.name} · {b.weight_g}g</option>)}</select></Field>
-            <Field label="개수"><input className={inputClass} type="number" min="1" step="1" value={planBaseQty} onChange={(e) => setPlanBaseQty(e.target.value)} /></Field>
-          </div>}
-          {planMode === "ING" && <div className="flex flex-wrap gap-2">
-            <Field label="기준 재료"><select className={selectClass} value={planIngredientId} onChange={(e) => setPlanIngredientId(e.target.value)}><option value="">재료 선택…</option>{ingredientOptions.map((line) => <option key={line.id} value={line.id}>{line.name} · {fmtNumber(line.grams, 1)}g</option>)}</select></Field>
-            <Field label="목표 재료량(g)"><input className={inputClass} type="number" min="0.01" step="any" value={planIngredientG} onChange={(e) => setPlanIngredientG(e.target.value)} /></Field>
-          </div>}
-          <p className="font-mono text-xs">생산 배수: {Number.isFinite(multiplierNum) && multiplierNum > 0 ? `${fmtNumber(baseTotal * multiplierNum, 0)}g` : "입력값을 선택해 주세요"}</p>
+          {planMode === "MULT" && (
+            <Field label="레시피 배수">
+              <input
+                className={inputClass}
+                type="number"
+                min="0.001"
+                step="any"
+                value={planMultiplier}
+                onChange={(e) => setPlanMultiplier(e.target.value)}
+              />
+            </Field>
+          )}
+          {planMode === "MOULD" && (
+            <div className="flex flex-wrap gap-2">
+              <Field label="목표 몰드">
+                <select
+                  className={selectClass}
+                  value={planMouldId}
+                  onChange={(e) => setPlanMouldId(e.target.value)}
+                >
+                  <option value="">몰드 선택…</option>
+                  {(allMoulds.data ?? [])
+                    .filter((m) => m.reference_weight_g)
+                    .map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {mouldAbbr(m)}
+                      </option>
+                    ))}
+                </select>
+              </Field>
+              <Field label="몰드 개수">
+                <input
+                  className={inputClass}
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={planMouldQty}
+                  onChange={(e) => setPlanMouldQty(e.target.value)}
+                />
+              </Field>
+            </div>
+          )}
+          {planMode === "BASE" && (
+            <div className="flex flex-wrap gap-2">
+              <Field label="기본중량">
+                <select
+                  className={selectClass}
+                  value={planBaseId}
+                  onChange={(e) => setPlanBaseId(e.target.value)}
+                >
+                  <option value="">기본중량 선택…</option>
+                  {(baseWeights.data ?? []).map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name} · {b.weight_g}g
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="개수">
+                <input
+                  className={inputClass}
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={planBaseQty}
+                  onChange={(e) => setPlanBaseQty(e.target.value)}
+                />
+              </Field>
+            </div>
+          )}
+          {planMode === "ING" && (
+            <div className="flex flex-wrap gap-2">
+              <Field label="기준 재료">
+                <select
+                  className={selectClass}
+                  value={planIngredientId}
+                  onChange={(e) => setPlanIngredientId(e.target.value)}
+                >
+                  <option value="">재료 선택…</option>
+                  {ingredientOptions.map((line) => (
+                    <option key={line.id} value={line.id}>
+                      {line.name} · {fmtNumber(line.grams, 1)}g
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="목표 재료량(g)">
+                <input
+                  className={inputClass}
+                  type="number"
+                  min="0.01"
+                  step="any"
+                  value={planIngredientG}
+                  onChange={(e) => setPlanIngredientG(e.target.value)}
+                />
+              </Field>
+            </div>
+          )}
+          <p className="font-mono text-xs">
+            생산 배수:{" "}
+            {Number.isFinite(multiplierNum) && multiplierNum > 0
+              ? `${fmtNumber(baseTotal * multiplierNum, 0)}g`
+              : "입력값을 선택해 주세요"}
+          </p>
         </div>
       )}
       {!addOnSelect && versionId && (
@@ -874,10 +978,23 @@ export function AddFormulaVersionForm({
         </p>
       )}
       <div className="flex gap-2">
-        {!addOnSelect && <button type="submit" className={primaryButtonClass} disabled={add.isPending || !versionId || !Number.isFinite(multiplierNum) || multiplierNum <= 0}>
-          ADD
-        </button>}
-        <button type="button" className={buttonClass} disabled={add.isPending} onClick={() => onDone()}>
+        {!addOnSelect && (
+          <button
+            type="submit"
+            className={primaryButtonClass}
+            disabled={
+              add.isPending || !versionId || !Number.isFinite(multiplierNum) || multiplierNum <= 0
+            }
+          >
+            ADD
+          </button>
+        )}
+        <button
+          type="button"
+          className={buttonClass}
+          disabled={add.isPending}
+          onClick={() => onDone()}
+        >
           CANCEL
         </button>
       </div>
@@ -945,6 +1062,7 @@ type WeighingColumn = {
   slot?: string | null;
   mouldId?: string | null;
   mouldQty?: number | null;
+  batterSplit?: number[] | null;
   /** 레시피 기본 몰드 — 몰드 개수가 비어 있을 때 배수에서 거꾸로 계산하는 데 사용 */
   baseMouldId?: string | null;
   /** 블렌드(합성) 포뮬라의 원본별 하위 열 — 같은 groupKey(부모 선택 id)끼리 맨 위 제목 열로 묶는다 */
@@ -973,12 +1091,18 @@ function WeighingView({
   columns,
   onProgressChanged,
   onEditColumn,
+  onSelectColumn,
+  onColumnOrder,
+  onEditPlan,
 }: {
   sessionId: string;
   groups: ReturnType<typeof buildWeighingGroups>;
   columns: WeighingColumn[];
   onProgressChanged: () => void;
   onEditColumn?: (column: WeighingColumn) => void;
+  onSelectColumn?: ((id: string) => void) | undefined;
+  onColumnOrder?: ((ids: string[]) => void) | undefined;
+  onEditPlan?: ((id: string) => void) | undefined;
 }) {
   const mouldsForTotal = useQuery(mouldsQuery());
   const mouldById = new Map((mouldsForTotal.data ?? []).map((m) => [m.id, m]));
@@ -997,11 +1121,12 @@ function WeighingView({
   useEffect(() => {
     setColumnOrder((prev) => {
       const ids = columns.map((c) => c.selectionId);
+      if (onColumnOrder) return ids;
       const kept = prev.filter((id) => ids.includes(id));
       const added = ids.filter((id) => !kept.includes(id));
       return [...kept, ...added];
     });
-  }, [columns]);
+  }, [columns, onColumnOrder]);
 
   useEffect(() => {
     setRowOrder((prev) => {
@@ -1039,8 +1164,9 @@ function WeighingView({
       }
     }
     return {
-      totalsByColumn: Object.fromEntries([...byColumn].map(([id, lines]) =>
-        [id, lines.reduce((sum, line) => sum + line.grams, 0)])),
+      totalsByColumn: Object.fromEntries(
+        [...byColumn].map(([id, lines]) => [id, lines.reduce((sum, line) => sum + line.grams, 0)]),
+      ),
       gramsByColumn: new Map([...byColumn].map(([id, lines]) => [id, roundIngredientGrams(lines)])),
     };
   }, [groups]);
@@ -1055,12 +1181,19 @@ function WeighingView({
   const handleColumnDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-    setColumnOrder((prev) => {
-      const oldIndex = prev.indexOf(String(active.id));
-      const newIndex = prev.indexOf(String(over.id));
-      if (oldIndex === -1 || newIndex === -1) return prev;
-      return arrayMove(prev, oldIndex, newIndex);
-    });
+    const oldIndex = columnOrder.indexOf(String(active.id));
+    const newIndex = columnOrder.indexOf(String(over.id));
+    if (oldIndex < 0 || newIndex < 0) return;
+    const next = arrayMove(columnOrder, oldIndex, newIndex);
+    setColumnOrder(next);
+    onColumnOrder?.(
+      next.flatMap((id) => {
+        const column = columns.find((item) => item.selectionId === id);
+        return column?.groupKey
+          ? [column.groupKey]
+          : (column?.members?.map((member) => member.selectionId) ?? [id]);
+      }),
+    );
   };
 
   const handleRowDragEnd = (event: DragEndEvent) => {
@@ -1177,6 +1310,24 @@ function WeighingView({
                     formulaId={col.formulaId}
                     versionId={col.formulaVersionId}
                     multiplier={col.multiplier}
+                    onSelect={
+                      onSelectColumn
+                        ? () => onSelectColumn(col.groupKey ?? col.selectionId)
+                        : undefined
+                    }
+                    onEditPlan={
+                      onEditPlan && !col.groupKey ? () => onEditPlan(col.selectionId) : undefined
+                    }
+                    mouldLabel={
+                      col.mouldId && mouldById.get(col.mouldId)
+                        ? mouldAbbr(mouldById.get(col.mouldId)!)
+                        : undefined
+                    }
+                    mouldCount={col.mouldQty}
+                    sourceLabel={col.members
+                      ?.map((member) => member.label)
+                      .filter(Boolean)
+                      .join(" + ")}
                     rnd={rndVersionIds.has(col.formulaVersionId)}
                     groupLabel={col.groupKey ? (col.groupLabel ?? "") : undefined}
                     groupFirst={
@@ -1222,10 +1373,31 @@ function WeighingView({
           </SortableContext>
         </DndContext>
         <tfoot>
+          {displayColumns.some((column) => column.mouldId) && (
+            <tr>
+              <th className="label-caps sticky left-0 z-10 border border-border bg-secondary px-3 py-1 text-right text-[11px]">
+                몰드 · 개수
+              </th>
+              {displayColumns.map((column) => {
+                const mould = column.mouldId ? mouldById.get(column.mouldId) : undefined;
+                return (
+                  <td
+                    key={column.selectionId}
+                    className="border border-border bg-secondary px-2 py-1 text-xs"
+                  >
+                    {mould
+                      ? `${mouldAbbr(mould)}${column.mouldQty == null ? "" : ` · ${column.mouldQty}개`}`
+                      : "—"}
+                  </td>
+                );
+              })}
+              <td className="border border-border bg-secondary" />
+            </tr>
+          )}
           {displayColumns.some((c) => c.mouldId) && (
             <tr>
               <th className="label-caps sticky left-0 z-10 border-t border-r border-border bg-secondary px-3 py-1 text-right text-[11px] text-muted-foreground">
-                MOULD
+                몰드별 배분
               </th>
               {displayColumns.map((col) => {
                 // 2026-11-13: 팝업 세션은 slot이 null이라 SHEET 한정이면 몰드 행이 사라졌다 — 몰드가 있으면 슬롯과 무관하게 표시.
@@ -1235,28 +1407,18 @@ function WeighingView({
                   col.mouldQty ?? (m && baseM ? mouldQty(col.multiplier, baseM, m) : null);
                 // Use actual batter total, not the nominal mould capacity.
                 const actualTotal = totalsByColumn[col.selectionId] ?? 0;
-                const perMouldG =
-                  qty != null && qty > 0 && actualTotal > 0
-                    ? actualTotal / qty
-                    : null;
+                const split =
+                  qty == null
+                    ? []
+                    : col.batterSplit && matchesMouldSplit(col.batterSplit, qty, actualTotal)
+                      ? col.batterSplit
+                      : equalMouldSplit(actualTotal, qty);
                 return (
                   <td
                     key={col.selectionId}
                     className="border-t border-l border-border bg-secondary px-2 py-1 text-left font-mono text-[11px] tabular-nums text-muted-foreground"
                   >
-                    {m ? (
-                      <>
-                        {mouldAbbr(m)}
-                        {qty != null && ` ×${fmtNumber(qty, 0)}`}
-                        {perMouldG != null && (
-                          <span className="block text-[10px]">
-                            1개당 {fmtNumber(perMouldG, 0)}g · 전체 {fmtNumber(actualTotal, 0)}g
-                          </span>
-                        )}
-                      </>
-                    ) : (
-                      "—"
-                    )}
+                    {split.length > 1 ? split.map((grams) => `${grams}g`).join(" + ") : "—"}
                   </td>
                 );
               })}
@@ -1265,7 +1427,7 @@ function WeighingView({
           )}
           <tr>
             <th className="label-caps sticky left-0 bottom-0 z-10 border-t border-r border-border bg-secondary px-3 py-2 text-right text-xs text-muted-foreground">
-              TOTAL
+              전체 중량
             </th>
             {displayColumns.map((col) => (
               <td
@@ -1333,6 +1495,11 @@ function MatrixColumnHeader({
   groupFirst = false,
   onResizeStart,
   onEdit,
+  onSelect,
+  onEditPlan,
+  mouldLabel,
+  mouldCount,
+  sourceLabel,
 }: {
   id: string;
   /** 블렌드(합성) 포뮬라의 원본 열이면 묶음 제목 — 첫 열에만 글자를 그리고 모든 원본 열 위에 같은 색 띠를 둔다 */
@@ -1346,6 +1513,11 @@ function MatrixColumnHeader({
   rnd: boolean;
   onResizeStart: (clientX: number) => void;
   onEdit: (() => void) | undefined;
+  onSelect?: (() => void) | undefined;
+  onEditPlan?: (() => void) | undefined;
+  mouldLabel?: string | undefined;
+  mouldCount?: number | null | undefined;
+  sourceLabel?: string | undefined;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
@@ -1383,20 +1555,47 @@ function MatrixColumnHeader({
         <div className="min-w-0 flex-1">
           <p className="whitespace-nowrap text-xs leading-tight">
             {rnd && <span className="label-caps mr-1 text-[10px] text-[#3F7A1F]">🧪 R&amp;D</span>}
-            <Link
-              to="/formulas/$formulaId"
-              params={{ formulaId }}
-              search={{ version: versionId }}
-              className="underline-offset-2 hover:underline"
-              title="포뮬라 페이지 열기"
-              onPointerDown={(e) => e.stopPropagation()}
+            {onSelect ? (
+              <button type="button" className="text-left hover:underline" onClick={onSelect}>
+                {formulaName}
+              </button>
+            ) : (
+              <Link
+                to="/formulas/$formulaId"
+                params={{ formulaId }}
+                search={{ version: versionId }}
+                className="underline-offset-2 hover:underline"
+                title="포뮬라 페이지 열기"
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                {formulaName}
+              </Link>
+            )}
+          </p>
+          {sourceLabel && (
+            <p className="truncate text-[10px] text-muted-foreground" title={sourceLabel}>
+              {sourceLabel}
+            </p>
+          )}
+          {onEditPlan ? (
+            <button
+              type="button"
+              className="text-left text-[11px] underline-offset-2 hover:underline"
+              onClick={onEditPlan}
             >
-              {formulaName}
-            </Link>
-          </p>
-          <p className="label-caps whitespace-nowrap text-[11px] text-muted-foreground">
-            ×{fmtNumber(multiplier, 3)}
-          </p>
+              {[
+                mouldLabel ?? "몰드 선택",
+                mouldCount != null ? `${mouldCount}개` : null,
+                `×${fmtNumber(multiplier, 3)}`,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </button>
+          ) : (
+            <p className="label-caps whitespace-nowrap text-[11px] text-muted-foreground">
+              ×{fmtNumber(multiplier, 3)}
+            </p>
+          )}
         </div>
         {/* 2026-10-14 사용자 요청: "work session에서 재료 추가하고 추가된 재료로 새로운 버전
             포뮬라 추가 하는버튼" — 포뮬라 페이지로 이동하지 않고 이 열의 레시피를 바로
@@ -1409,7 +1608,7 @@ function MatrixColumnHeader({
             disabled={!onEdit}
             title={!onEdit ? "UNMERGE 후 개별 레시피를 수정하세요" : undefined}
           >
-            EDIT
+            EDIT FORMULA
           </button>
         )}
       </div>
@@ -1588,7 +1787,9 @@ function WeighingMatrixCell({
         }}
         title={cell.note ?? undefined}
       >
-        {displayGrams != null ? `${displayGrams}g` : `${fmtNumber(cell.workingAmount, 2)}${cell.unit}`}
+        {displayGrams != null
+          ? `${displayGrams}g`
+          : `${fmtNumber(cell.workingAmount, 2)}${cell.unit}`}
         {scaledSecondary != null && cell.secondaryUnit && (
           <span className="ml-1 text-[10px] font-normal text-muted-foreground">
             · {fmtNumber(scaledSecondary, 0)}
@@ -1664,10 +1865,12 @@ function FormulaView({
       {rows.map((row) => {
         const lines = ingredientsByVersion[row.formula_version_id] ?? [];
         const multiplier = Number(row.multiplier);
-        const displayGrams = roundIngredientGrams(lines.flatMap((line) => {
-          const grams = toGrams(workingAmount(Number(line.amount), multiplier), line.unit);
-          return grams == null ? [] : [{ id: line.id, grams }];
-        }));
+        const displayGrams = roundIngredientGrams(
+          lines.flatMap((line) => {
+            const grams = toGrams(workingAmount(Number(line.amount), multiplier), line.unit);
+            return grams == null ? [] : [{ id: line.id, grams }];
+          }),
+        );
         return (
           <div key={row.id} className="border border-border">
             <div className="border-b border-border bg-secondary/40 px-3 py-2">
@@ -1691,7 +1894,8 @@ function FormulaView({
                     )}
                   </span>
                   <span className="text-base tabular-nums">
-                    {displayGrams.has(line.id) ? `${displayGrams.get(line.id)}g`
+                    {displayGrams.has(line.id)
+                      ? `${displayGrams.get(line.id)}g`
                       : `${fmtNumber(workingAmount(Number(line.amount), multiplier), 2)}${line.unit}`}
                     {multiplier !== 1 && (
                       <span className="ml-2 font-mono text-xs text-muted-foreground">
@@ -3456,6 +3660,8 @@ export function useProductionMerge(rowIds: string[]) {
 
 export function DayWorkView({
   items,
+  onSelectColumn,
+  onColumnOrder,
   mergedVersions,
   onToggleMerge,
   labels = {},
@@ -3476,8 +3682,11 @@ export function DayWorkView({
   onToggleMerge: (versionId: string) => void;
   items: { sessionId: string; rowId: string }[];
   labels?: Record<string, string>;
+  onSelectColumn?: (id: string) => void;
+  onColumnOrder?: (ids: string[]) => void;
 }) {
   const queryClient = useQueryClient();
+  const [planId, setPlanId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"WEIGHING" | "FORMULA">("WEIGHING");
   const [editingColumn, setEditingColumn] = useState<WeighingColumn | null>(null);
   const sessionIds = useMemo(() => [...new Set(items.map((i) => i.sessionId))], [items]);
@@ -3596,6 +3805,7 @@ export function DayWorkView({
             sessionId: r.sessionId,
             slot: r.slot ?? null,
             mouldId: r.mould_id ?? null,
+            batterSplit: group.members.length === 1 ? r.batter_split_g : null,
             baseMouldId: r.formula_versions.default_mould_id ?? null,
             mouldQty: group.members.every((m) => m.mould_id === r.mould_id && m.mould_qty != null)
               ? group.members.reduce((sum, m) => sum + Number(m.mould_qty), 0)
@@ -3716,6 +3926,55 @@ export function DayWorkView({
             </div>
           }
         >
+          {planId &&
+            rowsById.get(planId) &&
+            (() => {
+              const row = rowsById.get(planId)!.row;
+              const group = quantityGroups.find((entry) =>
+                entry.members.some((member) => member.id === planId),
+              );
+              const members = group?.members ?? [row];
+              const compatible = ordered.filter(
+                (item) => item.row.formula_version_id === row.formula_version_id,
+              );
+              return (
+                <div className="mb-2 space-y-2 border border-border p-2">
+                  <div className="flex gap-2">
+                    <button type="button" className={buttonClass} onClick={() => setPlanId(null)}>
+                      닫기
+                    </button>
+                    {compatible.length > 1 && (
+                      <button
+                        type="button"
+                        className={buttonClass}
+                        onClick={() => onToggleMerge(row.formula_version_id)}
+                      >
+                        {mergedVersions.has(row.formula_version_id)
+                          ? "병합 해제"
+                          : "같은 배합 병합"}
+                      </button>
+                    )}
+                  </div>
+                  {members.map((member) => (
+                    <div key={member.id}>
+                      <p className="text-xs text-muted-foreground">{labels[member.id]}</p>
+                      <OrderComponentPlanRow row={member} />
+                      {Number(member.mould_qty) > 1 && (
+                        <MouldAllocation
+                          row={member}
+                          batchGrams={
+                            sumBaseGrams(ingredientsByVersion[member.formula_version_id] ?? []) *
+                            Number(member.multiplier)
+                          }
+                          label={labels[member.id] ?? ""}
+                          mouldLabel="몰드"
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
           {viewMode === "WEIGHING" ? (
             <WeighingView
               sessionId={ordered[0]!.sessionId}
@@ -3723,6 +3982,13 @@ export function DayWorkView({
               columns={columns}
               onProgressChanged={invalidateProgress}
               onEditColumn={setEditingColumn}
+              onSelectColumn={onSelectColumn}
+              onColumnOrder={onColumnOrder}
+              onEditPlan={
+                onSelectColumn
+                  ? (id) => setPlanId((previous) => (previous === id ? null : id))
+                  : undefined
+              }
             />
           ) : (
             <FormulaView
@@ -3903,7 +4169,10 @@ function ProductionQuantityRow({
   const moulds = useQuery(mouldsQuery());
   const mouldById = new Map((moulds.data ?? []).map((mould) => [mould.id, mould]));
   const mouldCount = members.reduce((sum, row) => sum + (Number(row.mould_qty) || 0), 0);
-  const allocatedTotal = members.reduce((sum, row) => sum + Math.round(base * Number(row.multiplier)), 0);
+  const allocatedTotal = members.reduce(
+    (sum, row) => sum + Math.round(base * Number(row.multiplier)),
+    0,
+  );
   return (
     <div className="space-y-1 px-3 pb-3 pt-2 text-xs">
       {!compact && (
@@ -3927,14 +4196,16 @@ function ProductionQuantityRow({
       </p>
       {members.map((member) => {
         const mould = member.mould_id ? mouldById.get(member.mould_id) : undefined;
-        return mould && (
-          <MouldAllocation
-            key={member.id}
-            row={member}
-            batchGrams={base * Number(member.multiplier)}
-            label={labels[member.id] ?? "WORK SESSION"}
-            mouldLabel={mouldAbbr(mould)}
-          />
+        return (
+          mould && (
+            <MouldAllocation
+              key={member.id}
+              row={member}
+              batchGrams={base * Number(member.multiplier)}
+              label={labels[member.id] ?? "WORK SESSION"}
+              mouldLabel={mouldAbbr(mould)}
+            />
+          )
         );
       })}
       <div className="flex flex-wrap gap-2">
