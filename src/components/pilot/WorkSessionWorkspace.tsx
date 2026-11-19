@@ -932,10 +932,38 @@ const MIN_MATRIX_INGREDIENT_COL_WIDTH = 110;
  * 자연스럽게 이어지도록 하는 실제 데이터 없는 "채움" 열 — VersionComparisonSheet와 동일한 패턴. */
 const MATRIX_FILLER_COL_ID = "__filler__";
 
+const WEIGHING_COLUMN_ORDER_KEY = "pilot:weighing-column-order:v1";
+const WEIGHING_COLUMN_ORDER_MAX = 500;
+
+/** 저장된 WEIGHING MATRIX 열 순서(work_session_formula_versions.id 목록). 모든 표가 한 목록을 공유하고,
+ * 각 표는 자기 열 id만 골라 그 상대 순서를 쓴다. */
+function readStoredColumnOrder(): string[] {
+  try {
+    const stored: unknown = JSON.parse(localStorage.getItem(WEIGHING_COLUMN_ORDER_KEY) ?? "[]");
+    return Array.isArray(stored) ? stored.filter((s): s is string => typeof s === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/** 이 표의 새 순서를 맨 앞에 두고, 다른 표의 저장 순서는 그대로 뒤에 남긴다. */
+function writeStoredColumnOrder(order: string[]) {
+  try {
+    const mine = new Set(order);
+    const others = readStoredColumnOrder().filter((id) => !mine.has(id));
+    localStorage.setItem(
+      WEIGHING_COLUMN_ORDER_KEY,
+      JSON.stringify([...order, ...others].slice(0, WEIGHING_COLUMN_ORDER_MAX)),
+    );
+  } catch {
+    /* optional view preference */
+  }
+}
+
 /** WORK VIEW의 WEIGHING MATRIX — Component/Formula 페이지의 버전 비교 시트와 동일하게, 실제
- * 엑셀처럼 행(재료)/열(포뮬라 버전)을 드래그로 재배치하거나 크기를 조절할 수 있다. 순서/크기는
- * 이 화면을 보는 동안만 유지되는 세션 전용 상태로, 실제 계량 진행 상태(그램수/체크/메모)와는
- * 무관하다 — 새로고침하면 원래 순서(선택한 순서)로 돌아간다. 첫 열/헤더 행의 sticky 고정은
+ * 엑셀처럼 행(재료)/열(포뮬라 버전)을 드래그로 재배치하거나 크기를 조절할 수 있다. 열 순서는
+ * localStorage에 저장돼 페이지를 옮겨도 남고(2026-11-19), 행 순서/크기는 이 화면을 보는 동안만 유지되는 상태로, 실제 계량 진행 상태(그램수/체크/메모)와는
+ * 무관하다 — 행 순서는 새로고침하면 원래 순서로 돌아간다. 첫 열/헤더 행의 sticky 고정은
  * 그대로 유지한다. */
 function WeighingView({
   sessionId,
@@ -964,10 +992,13 @@ function WeighingView({
 
   // 선택된 포뮬라 버전(열)/재료(행)이 바뀌면 순서 목록을 맞춰준다 — 기존 순서는 최대한
   // 유지하고, 새로 생긴 항목만 뒤에 붙이고 사라진 항목은 뺀다.
+  // 2026-11-19: 열 순서는 페이지를 옮겨도 남도록 localStorage에 저장한다(보기 설정 — DB 미사용).
+  // 처음 그릴 때(prev가 비었을 때) 저장된 순서를 먼저 적용하고, 저장에 없는 열은 원래 순서대로 뒤에 붙인다.
   useEffect(() => {
     setColumnOrder((prev) => {
       const ids = columns.map((c) => c.selectionId);
-      const kept = prev.filter((id) => ids.includes(id));
+      const base = prev.length > 0 ? prev : readStoredColumnOrder();
+      const kept = base.filter((id) => ids.includes(id));
       const added = ids.filter((id) => !kept.includes(id));
       return [...kept, ...added];
     });
@@ -1023,7 +1054,9 @@ function WeighingView({
       const oldIndex = prev.indexOf(String(active.id));
       const newIndex = prev.indexOf(String(over.id));
       if (oldIndex === -1 || newIndex === -1) return prev;
-      return arrayMove(prev, oldIndex, newIndex);
+      const next = arrayMove(prev, oldIndex, newIndex);
+      writeStoredColumnOrder(next);
+      return next;
     });
   };
 
