@@ -458,6 +458,31 @@ export function ProductionDashboard() {
     }
     return [...groups.values()];
   });
+  // One order everywhere: the work tabs (1차, 2차 …) and their order drive the timeline chips,
+  // the WORK VIEW columns and the production record list.
+  const workPosition = new Map<string, number>();
+  workGroups.flat().forEach((members, index) => {
+    for (const id of members) workPosition.set(id, index);
+  });
+  const recordPosition = (record: { rows: string[] }) =>
+    Math.min(...record.rows.map((id) => workPosition.get(id) ?? Number.MAX_SAFE_INTEGER));
+  productionRecords.sort(
+    (a, b) =>
+      recordPosition(a) - recordPosition(b) ||
+      a.block.block_date.localeCompare(b.block.block_date) ||
+      a.block.start_time.localeCompare(b.block.start_time) ||
+      (a.block.part_no ?? 0) - (b.block.part_no ?? 0),
+  );
+  const recordLane = (record: { rows: string[] }) => {
+    const tabs = record.rows.flatMap((id) => tabByRow.get(id) ?? []);
+    return tabs.length ? Math.min(...tabs) : 0;
+  };
+  const timelineLanes = workGroups.flatMap((groups, tab) =>
+    groups.length > 0 || productionRecords.some((record) => recordLane(record) === tab)
+      ? [tab]
+      : [],
+  );
+  if (!timelineLanes.length) timelineLanes.push(0);
   const moveWork = (rowId: string, target: number, position?: number) => {
     const source = tabByRow.get(rowId);
     const group =
@@ -1058,50 +1083,72 @@ export function ProductionDashboard() {
         {date >= todayStr && (
           <div className="border border-border bg-card p-3">
             <h3 className="label-caps text-xs">실제 작업 타임라인</h3>
-            <div className="mt-2 flex items-center gap-2 overflow-x-auto">
-              {availableSegments.map((segment) => {
-                const start = toMin(segment.start);
-                const duration = toMin(segment.end) - start;
-                if (duration <= 0) return null;
-                return (
-                  <div
-                    key={segment.start}
-                    className="min-w-44 flex-1 space-y-1"
-                    style={{ flexGrow: duration }}
-                  >
-                    <div className="flex justify-between font-mono text-[11px]">
-                      <span>{segment.start}</span>
-                      <span>{segment.end}</span>
+            <div className="mt-2 flex gap-2">
+              {availableSegments.length > 0 && (
+                <div className="w-12 shrink-0 space-y-1" aria-hidden>
+                  <div className="font-mono text-[11px]">&nbsp;</div>
+                  {timelineLanes.map((tab) => (
+                    <div
+                      key={tab}
+                      className="label-caps h-7 text-[11px] leading-7 text-muted-foreground"
+                    >
+                      {tab + 1}차
                     </div>
-                    <div className="relative h-7 bg-muted">
-                      {productionRecords.flatMap((record) => {
-                        if (!record.start) return [];
-                        const from = Math.max(start, recordMinute(record.start));
-                        const until = Math.min(start + duration, recordMinute(record.end ?? clock));
-                        if (until <= from) return [];
-                        return (
-                          <button
-                            key={record.block.id}
-                            type="button"
-                            title={record.row.componentName}
-                            className={cn(
-                              "absolute inset-y-0 truncate border border-border px-1 text-xs",
-                              record.done ? "bg-secondary" : "bg-primary text-primary-foreground",
-                            )}
-                            style={{
-                              left: `${((from - start) * 100) / duration}%`,
-                              width: `${((until - from) * 100) / duration}%`,
-                            }}
-                            onClick={() => focusRecord(record.row.id)}
-                          >
-                            {record.row.componentName}
-                          </button>
-                        );
-                      })}
+                  ))}
+                </div>
+              )}
+              <div className="flex min-w-0 flex-1 items-start gap-2 overflow-x-auto">
+                {availableSegments.map((segment) => {
+                  const start = toMin(segment.start);
+                  const duration = toMin(segment.end) - start;
+                  if (duration <= 0) return null;
+                  return (
+                    <div
+                      key={segment.start}
+                      className="min-w-44 flex-1 space-y-1"
+                      style={{ flexGrow: duration }}
+                    >
+                      <div className="flex justify-between font-mono text-[11px]">
+                        <span>{segment.start}</span>
+                        <span>{segment.end}</span>
+                      </div>
+                      {timelineLanes.map((tab) => (
+                        <div key={tab} className="relative h-7 bg-muted">
+                          {productionRecords.flatMap((record) => {
+                            if (!record.start || recordLane(record) !== tab) return [];
+                            const from = Math.max(start, recordMinute(record.start));
+                            const until = Math.min(
+                              start + duration,
+                              recordMinute(record.end ?? clock),
+                            );
+                            if (until <= from) return [];
+                            return (
+                              <button
+                                key={record.block.id}
+                                type="button"
+                                title={record.row.componentName}
+                                className={cn(
+                                  "absolute inset-y-0 truncate border border-border px-1 text-xs",
+                                  record.done
+                                    ? "bg-secondary"
+                                    : "bg-primary text-primary-foreground",
+                                )}
+                                style={{
+                                  left: `${((from - start) * 100) / duration}%`,
+                                  width: `${((until - from) * 100) / duration}%`,
+                                }}
+                                onClick={() => focusRecord(record.row.id)}
+                              >
+                                {record.row.componentName}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ))}
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
             {!availableSegments.length && (
               <p className="mt-1 text-xs text-muted-foreground">확인된 가용시간 없음</p>
@@ -1127,75 +1174,82 @@ export function ProductionDashboard() {
                   {record.end ? `–${formatTime(record.end)}` : ""}
                 </button>
               ))}
-            <div className="mt-2 flex flex-wrap gap-1">
-              {workGroups.flat().map((members, index) => {
-                const rowId = members[0]!;
-                const row = rowById.get(rowId);
-                const tab = tabByRow.get(rowId) ?? 0;
-                const groups = workGroups[tab]!;
-                const codes = [
-                  ...new Set(
-                    members.map((id) => rowById.get(id)?.order.order_number).filter(Boolean),
-                  ),
-                ].join(" + ");
-                const open = workMenuId === rowId;
-                return (
-                  <div key={rowId} className="relative">
-                    <button
-                      type="button"
-                      className={cn(buttonClass, open && "bg-secondary")}
-                      aria-expanded={open}
-                      onClick={() => {
-                        setWorkMenuId(open ? null : rowId);
-                        focusRecord(rowId);
-                      }}
-                    >
-                      {index + 1} · {row?.componentName}{" "}
-                      <span className="text-muted-foreground">{codes}</span> ▾
-                    </button>
-                    {open && (
-                      <div
-                        className="absolute left-0 z-30 mt-1 w-44 space-y-2 border border-border bg-card p-2 shadow-md"
-                        onKeyDown={(event) => {
-                          if (event.key === "Escape") setWorkMenuId(null);
-                        }}
-                      >
-                        <label className="block space-y-1 text-xs">
-                          작업 탭
-                          <select
-                            className="block w-full border border-border bg-background p-1"
-                            value={tab}
-                            onChange={(event) => moveWork(rowId, Number(event.target.value))}
-                          >
-                            {workGroups.map((_, target) => (
-                              <option key={target} value={target}>
-                                {target + 1}차 작업
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="block space-y-1 text-xs">
-                          탭 안 작업 순서
-                          <select
-                            className="block w-full border border-border bg-background p-1"
-                            value={groups.indexOf(members)}
-                            onChange={(event) => {
-                              moveWork(rowId, tab, Number(event.target.value));
-                              setWorkMenuId(null);
+            <div className="mt-2 space-y-1">
+              {workGroups.map((groups, tab) =>
+                groups.length === 0 ? null : (
+                  <div key={tab} className="flex flex-wrap items-center gap-1">
+                    <span className="label-caps w-12 shrink-0 text-[11px] text-muted-foreground">
+                      {tab + 1}차
+                    </span>
+                    {groups.map((members, index) => {
+                      const rowId = members[0]!;
+                      const row = rowById.get(rowId);
+                      const codes = [
+                        ...new Set(
+                          members.map((id) => rowById.get(id)?.order.order_number).filter(Boolean),
+                        ),
+                      ].join(" + ");
+                      const open = workMenuId === rowId;
+                      return (
+                        <div key={rowId} className="relative">
+                          <button
+                            type="button"
+                            className={cn(buttonClass, open && "bg-secondary")}
+                            aria-expanded={open}
+                            onClick={() => {
+                              setWorkMenuId(open ? null : rowId);
+                              focusRecord(rowId);
                             }}
                           >
-                            {groups.map((_, position) => (
-                              <option key={position} value={position}>
-                                {position + 1}번째
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      </div>
-                    )}
+                            {index + 1} · {row?.componentName}{" "}
+                            <span className="text-muted-foreground">{codes}</span> ▾
+                          </button>
+                          {open && (
+                            <div
+                              className="absolute left-0 z-30 mt-1 w-44 space-y-2 border border-border bg-card p-2 shadow-md"
+                              onKeyDown={(event) => {
+                                if (event.key === "Escape") setWorkMenuId(null);
+                              }}
+                            >
+                              <label className="block space-y-1 text-xs">
+                                작업 탭
+                                <select
+                                  className="block w-full border border-border bg-background p-1"
+                                  value={tab}
+                                  onChange={(event) => moveWork(rowId, Number(event.target.value))}
+                                >
+                                  {workGroups.map((_, target) => (
+                                    <option key={target} value={target}>
+                                      {target + 1}차 작업
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                              <label className="block space-y-1 text-xs">
+                                탭 안 작업 순서
+                                <select
+                                  className="block w-full border border-border bg-background p-1"
+                                  value={groups.indexOf(members)}
+                                  onChange={(event) => {
+                                    moveWork(rowId, tab, Number(event.target.value));
+                                    setWorkMenuId(null);
+                                  }}
+                                >
+                                  {groups.map((_, position) => (
+                                    <option key={position} value={position}>
+                                      {position + 1}번째
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
+                ),
+              )}
             </div>
           </div>
         )}
@@ -1256,26 +1310,38 @@ export function ProductionDashboard() {
             {showQueue && (
               <section className="border border-border bg-card p-3">
                 <h3 className="font-semibold">생산 기록</h3>
-                {openRecords.map(({ block, row, rows, mergedLabel }) => (
-                  <ProductionBlockRecord
-                    key={block.id}
-                    block={block}
-                    row={row}
-                    title={blockTitle(block, row)}
-                    active={recordRowId != null && rows.includes(recordRowId)}
-                    mergedLabel={mergedLabel}
-                    onStarted={ensureSessionStarted}
-                  />
-                ))}
-                {activeItems
-                  .filter(
-                    (item) => !productionRecords.some((record) => record.rows.includes(item.rowId)),
-                  )
-                  .map((item) => (
-                    <p key={item.rowId} className="py-1 text-xs">
-                      {rowById.get(item.rowId)?.componentName} · 시간 미정
-                    </p>
-                  ))}
+                {[
+                  ...openRecords.map((record) => ({
+                    position: recordPosition(record),
+                    node: (
+                      <ProductionBlockRecord
+                        key={record.block.id}
+                        block={record.block}
+                        row={record.row}
+                        title={blockTitle(record.block, record.row)}
+                        active={recordRowId != null && record.rows.includes(recordRowId)}
+                        mergedLabel={record.mergedLabel}
+                        onStarted={ensureSessionStarted}
+                      />
+                    ),
+                  })),
+                  ...activeItems
+                    .filter(
+                      (item) =>
+                        !productionRecords.some((record) => record.rows.includes(item.rowId)),
+                    )
+                    .map((item) => ({
+                      position: recordPosition({ rows: [item.rowId] }),
+                      node: (
+                        <p key={item.rowId} className="py-1 text-xs">
+                          {rowById.get(item.rowId)?.componentName} · 시간 미정
+                        </p>
+                      ),
+                    })),
+                ]
+                  // Stable sort keeps a split component's parts in timeline order.
+                  .sort((a, b) => a.position - b.position)
+                  .map((entry) => entry.node)}
               </section>
             )}
             <section className="border border-border bg-card p-3">
