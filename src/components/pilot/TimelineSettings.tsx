@@ -63,9 +63,11 @@ export function timelineSegments(
   const valid = range.start < range.end;
   const custom = valid ? [{ start: range.start, end: range.end }] : [];
   if (range.mode === "custom" || !showPlanner) return { segments: custom, fallback: false };
-  const available = (planner ?? []).filter((segment) => segment.state === "available");
-  return available.length
-    ? { segments: available, fallback: false }
+  // Keep the complete Planner time axis: hiding busy/check/unknown intervals
+  // shifts recorded production work away from its real clock position.
+  const day = (planner ?? []).filter((segment) => segment.start < segment.end);
+  return day.length
+    ? { segments: day, fallback: false }
     : { segments: custom, fallback: true };
 }
 
@@ -115,7 +117,7 @@ export function TimelineSettingsPanel({
             checked={range.mode === "planner"}
             onChange={() => onRange({ ...range, mode: "planner" })}
           />
-          Planner 가용시간 (없으면 아래 기본 시간)
+          Planner 전체 시간축 (없으면 아래 기본 시간)
         </label>
         <label className="flex items-center gap-1.5">
           <input
