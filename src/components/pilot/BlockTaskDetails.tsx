@@ -438,19 +438,21 @@ export function BlockTaskDetails({
               </Fragment>
             );
           })}
+          <button
+            type="button"
+            className={`${buttonClass} col-start-6 h-[26px] w-[26px] !min-h-[26px] justify-self-end !p-0 text-xs`}
+            aria-label="타이머 추가"
+            title="타이머 추가"
+            onClick={() => void saveTimerList([...timers, newTimer()])}
+          >
+            +
+          </button>
         </div>
-        <button
-          type="button"
-          className={`${buttonClass} !min-h-[26px] px-2 text-[11px]`}
-          onClick={() => void saveTimerList([...timers, newTimer()])}
-        >
-          ＋ 타이머 추가
-        </button>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {/* 반죽 높이 */}
-        <label className="space-y-1">
+      <details className="space-y-2">
+        <summary className="cursor-pointer text-xs text-muted-foreground">메모 · 관찰</summary>
+        <label className="block space-y-1">
           <span className="label-caps block text-[11px] text-muted-foreground">반죽 높이</span>
           <span className="flex items-center gap-1">
             <input
@@ -467,10 +469,6 @@ export function BlockTaskDetails({
             <span className="text-xs text-muted-foreground">mm</span>
           </span>
         </label>
-      </div>
-
-      <details className="space-y-2">
-        <summary className="cursor-pointer text-xs text-muted-foreground">메모 · 관찰</summary>
         {/* 관찰값 */}
         {hasObservationFields(task.task_type, observationOverrides) && (
           <div className="space-y-1 md:col-span-2">

@@ -2412,27 +2412,29 @@ function ProductionBlockRecord({
   }, [active]);
   return (
     <div className="border-b border-border/50 last:border-0">
-      <button
-        type="button"
-        aria-expanded={expanded}
-        className="flex w-full items-center gap-2 py-2 text-left text-xs"
-        onClick={() => setExpanded((v) => !v)}
-      >
-        <span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
-        <span className="min-w-0 flex-1">
-          {row.componentName} · {mergedLabel ?? row.order.order_number}
-        </span>
-        <span className="shrink-0 text-muted-foreground">
-          {task?.actual_started_at
-            ? `${formatTime(task.actual_started_at)}–${task.completed_at ? formatTime(task.completed_at) : "진행 중"}`
-            : "시작 전"}
-        </span>
-      </button>
-      {task && task.status !== "DONE" && (
-        <div className="flex flex-wrap gap-1 pb-2">
-          <BlockTimerChip block={block} row={row} onStarted={onStarted} part="timer" />
-        </div>
-      )}
+      <div className="flex items-center gap-2">
+        {task && task.status !== "DONE" && (
+          <div className="shrink-0">
+            <BlockTimerChip block={block} row={row} onStarted={onStarted} part="timer" />
+          </div>
+        )}
+        <button
+          type="button"
+          aria-expanded={expanded}
+          className="flex min-w-0 flex-1 items-center gap-2 py-2 text-left text-xs"
+          onClick={() => setExpanded((v) => !v)}
+        >
+          <span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
+          <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+            {row.componentName} · {mergedLabel ?? row.order.order_number}
+          </span>
+          <span className="shrink-0 text-muted-foreground">
+            {task?.actual_started_at
+              ? `${formatTime(task.actual_started_at)}–${task.completed_at ? formatTime(task.completed_at) : "진행 중"}`
+              : "시작 전"}
+          </span>
+        </button>
+      </div>
       {expanded && (
         <BlockTaskDetails
           block={block}

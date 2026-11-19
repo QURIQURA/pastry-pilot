@@ -1,12 +1,12 @@
+import { invalidateProductionSync } from "@/lib/production-sync";
 import { PopupProductionCard } from "./PopupProductionCard";
 import { toast } from "sonner";
-import { ComponentPlanReadout } from "./ComponentPlanReadout";
 import { ProductionOrderSizeEditor } from "./ProductionOrderSizeEditor";
 import {
-  removePlannedComponent,
-  reopenComponentForProduction,
-} from "@/lib/production-plan-actions";
-import { invalidateProductionSync } from "@/lib/production-sync";
+  ProductionComponentTable,
+  ProductionOrderHeader,
+  productionOrderStatusClass,
+} from "./ProductionComponentTable";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -17,25 +17,22 @@ import {
   ORDER_STATUSES,
   orderStatusLabel,
   ordersQuery,
-  workBlocksQuery,
   workSessionsQuery,
   workSessionFormulaVersionsQuery,
   type CoreSlot,
   type DashboardComponentRow,
 } from "@/lib/queries";
 import { buildProductionOrderCards } from "@/lib/production-orders";
-import { OrderComponentPlanRow } from "./OrderComponentPlanRow";
 import { formatDelivery } from "@/lib/datetime";
 import { ensureWorkSessionForOrder } from "@/lib/work-session";
 import { cn } from "@/lib/utils";
-import { slotBoxClass } from "@/lib/slot-color";
 import { AddFormulaVersionForm } from "@/components/pilot/WorkSessionWorkspace";
 import {
   DashboardComponentCopyForm,
   DashboardComponentNewForm,
 } from "@/components/pilot/DashboardComponentCopyForm";
-import { CopyWarning, OrderFlagBoxes, orderTitle, useOrderDietaryNames } from "./OrderTitle";
-import { buttonClass, selectClass } from "./ui";
+import { CopyWarning, OrderFlagBoxes, useOrderDietaryNames } from "./OrderTitle";
+import { buttonClass } from "./ui";
 import { supabase } from "@/integrations/supabase/client";
 import { syncOrderDeliveryToPlanner } from "@/lib/order-planner-sync";
 
@@ -49,33 +46,11 @@ export function ProductionOrdersTab({ completed = false }: { completed?: boolean
   const orders = useQuery(ordersQuery());
   const sessions = useQuery(workSessionsQuery());
   const components = useQuery(dashboardComponentsQuery());
-  const blocks = useQuery(workBlocksQuery());
   const [adding, setAdding] = useState<{ orderId: string; slot: CoreSlot } | null>(null);
   const dietaryOf = useOrderDietaryNames();
   const [sessionErrors, setSessionErrors] = useState<Record<string, string>>({});
   const [mode, setMode] = useState<"pick" | "copy" | "new">("pick");
-  const [orderTypeTab, setOrderTypeTab] = useState<"ALL" | "CAKE" | "POPUP">("ALL");
-
-  const firstBlockByRow = useMemo(() => {
-    const map = new Map<string, { date: string; time: string; count: number; lastDate: string }>();
-    for (const b of [...(blocks.data ?? [])].sort(
-      (a, b) =>
-        a.block_date.localeCompare(b.block_date) || a.start_time.localeCompare(b.start_time),
-    )) {
-      const cur = map.get(b.work_session_formula_version_id);
-      if (cur) {
-        cur.count += 1;
-        cur.lastDate = b.block_date;
-      } else
-        map.set(b.work_session_formula_version_id, {
-          date: b.block_date,
-          time: b.start_time.slice(0, 5),
-          count: 1,
-          lastDate: b.block_date,
-        });
-    }
-    return map;
-  }, [blocks.data]);
+  const [orderTypeTab, setOrderTypeTab] = useState<"CAKE" | "POPUP">("CAKE");
 
   const list = useMemo(
     () =>
@@ -180,26 +155,13 @@ export function ProductionOrdersTab({ completed = false }: { completed?: boolean
         </button>
       </div>
     );
-  const visibleOrders = list.filter(({ order }) =>
-    orderTypeTab === "ALL" || (orderTypeTab === "POPUP" ? order.order_kind === "POPUP" : order.order_kind !== "POPUP"),
+  const visibleOrders = list.filter(
+    ({ order }) => (orderTypeTab === "POPUP") === (order.order_kind === "POPUP"),
   );
 
-  if (list.length === 0) {
-    return (
-      <p className="font-mono text-xs text-muted-foreground">
-        {completed ? "완료된 오더가 없어요." : "진행 중인 오더가 없어요."}
-      </p>
-    );
-  }
-
   return (
-    <div className="space-y-3">
-      <p className="font-mono text-[11px] text-muted-foreground">
-        {completed
-          ? `완료된 오더 ${list.length}개 · 오더가 COMPLETED가 되면 ORDERS에서 자동으로 여기로 옮겨져요.`
-          : `진행 중인 오더 ${list.length}개 · 여기서 컴포넌트·레시피·생산 배수를 설정해요. 지정한 항목은 DASHBOARD 작업 대기공간으로 올라가고, Order 상세에는 읽기 전용으로 표시돼요.`}
-      </p>
-      {(sessions.isError || components.isError || blocks.isError) && (
+    <div className="w-full max-w-[64rem] space-y-3">
+      {(sessions.isError || components.isError) && (
         <p role="alert" className="text-xs text-destructive">
           주문 카드는 표시했지만 일부 생산 정보를 불러오지 못했습니다.{" "}
           <button type="button" className="underline" onClick={() => void refresh()}>
@@ -212,62 +174,78 @@ export function ProductionOrdersTab({ completed = false }: { completed?: boolean
           {(createSession.error as Error).message}
         </p>
       )}
-      <div className="flex flex-wrap gap-1 border-b border-border pb-2" role="tablist" aria-label="오더 종류">
-        {(["ALL", "CAKE", "POPUP"] as const).map((tab) => (
-          <button key={tab} type="button" role="tab" aria-selected={orderTypeTab === tab}
-            className={cn(buttonClass, "px-3 py-1 text-xs", orderTypeTab === tab && "bg-secondary font-semibold")}
-            onClick={() => setOrderTypeTab(tab)}>
-            {tab === "ALL" ? "ALL ORDERS" : tab === "CAKE" ? "CAKE ORDERS" : "POP-UP ORDERS"}
-            <span className="ml-1 opacity-60">{list.filter(({ order }) => tab === "ALL" || (tab === "POPUP" ? order.order_kind === "POPUP" : order.order_kind !== "POPUP")).length}</span>
+      <div
+        className="flex flex-wrap gap-1 border-b border-border pb-2"
+        role="tablist"
+        aria-label="오더 종류"
+      >
+        {(["CAKE", "POPUP"] as const).map((tab) => (
+          <button
+            key={tab}
+            type="button"
+            role="tab"
+            aria-selected={orderTypeTab === tab}
+            className={cn(
+              buttonClass,
+              "px-3 py-1 text-xs",
+              orderTypeTab === tab && "bg-secondary font-semibold",
+            )}
+            onClick={() => setOrderTypeTab(tab)}
+          >
+            {tab === "CAKE" ? "CAKE ORDERS" : "POP-UP ORDERS"}
+            <span className="ml-1 opacity-60">
+              {
+                list.filter(({ order }) => (tab === "POPUP") === (order.order_kind === "POPUP"))
+                  .length
+              }
+            </span>
           </button>
         ))}
       </div>
-      {visibleOrders.length === 0 && <p className="text-xs text-muted-foreground">이 유형의 오더가 없어요.</p>}
+      {visibleOrders.length === 0 && (
+        <p className="text-xs text-muted-foreground">이 유형의 오더가 없어요.</p>
+      )}
       <div className="grid grid-cols-1 gap-3">
         {visibleOrders.map(({ order, rows, session, ambiguousSession }) =>
           order.order_kind === "POPUP" ? (
             <PopupProductionCard key={order.id} order={order} />
           ) : (
             <section key={order.id} className="space-y-2 border border-border bg-card p-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="label-caps border border-foreground px-1.5 py-0.5 text-[11px]">
-                  {order.order_number}
-                </span>
-                <Link
-                  to="/orders/$orderId"
-                  params={{ orderId: order.id }}
-                  className="text-sm underline-offset-2 hover:underline"
-                >
-                  {orderTitle(order.customers?.name, order.products?.name, order.recipient ?? "")}
-                </Link>
-                <OrderFlagBoxes
-                  dietary={dietaryOf(order.id)}
-                  leastLiked={order.least_liked_flavours}
-                />
-                <select
-                  className={cn(selectClass, "w-auto py-0.5 text-[11px] uppercase")}
-                  value={order.status}
-                  disabled={setOrderStatus.isPending}
-                  onChange={(e) => setOrderStatus.mutate({ id: order.id, status: e.target.value })}
-                  aria-label="오더 상태"
-                >
-                  {ORDER_STATUSES.map((st) => (
-                    <option key={st} value={st}>
-                      {orderStatusLabel(st)}
-                    </option>
-                  ))}
-                </select>
-                {formatDelivery(order.pickup_at, order.event_date) && (
-                  <span className="ml-auto font-mono text-[11px]">
-                    🚚 {formatDelivery(order.pickup_at, order.event_date)}
-                  </span>
-                )}
-              </div>
-
-              <ProductionOrderSizeEditor
-                order={order}
-                sessionId={session?.id ?? ""}
-                readOnly={completed || order.status === "CANCELLED" || ambiguousSession}
+              <ProductionOrderHeader
+                number={order.order_number}
+                title={
+                  <>
+                    <Link
+                      to="/orders/$orderId"
+                      params={{ orderId: order.id }}
+                      className="text-sm underline-offset-2 hover:underline"
+                    >
+                      {order.customers?.name || order.recipient || "주문 상세"}
+                    </Link>
+                    <OrderFlagBoxes
+                      dietary={dietaryOf(order.id)}
+                      leastLiked={order.least_liked_flavours}
+                    />
+                  </>
+                }
+                meta={formatDelivery(order.pickup_at, order.event_date)}
+                status={
+                  <select
+                    className={productionOrderStatusClass}
+                    value={order.status}
+                    disabled={setOrderStatus.isPending}
+                    onChange={(e) =>
+                      setOrderStatus.mutate({ id: order.id, status: e.target.value })
+                    }
+                    aria-label="오더 상태"
+                  >
+                    {ORDER_STATUSES.map((st) => (
+                      <option key={st} value={st}>
+                        {orderStatusLabel(st)}
+                      </option>
+                    ))}
+                  </select>
+                }
               />
               {ambiguousSession && (
                 <p role="alert" className="text-xs text-destructive">
@@ -303,8 +281,17 @@ export function ProductionOrdersTab({ completed = false }: { completed?: boolean
               <ProductionOrderComponentList
                 sessionId={session?.id ?? ""}
                 dashboardRows={rows}
-                firstBlockByRow={firstBlockByRow}
-                readOnly={completed || order.status === "CANCELLED"}
+                readOnly={completed || order.status === "CANCELLED" || ambiguousSession}
+                title={
+                  <p className="text-sm font-medium">{order.products?.name || "제품 미지정"}</p>
+                }
+                details={
+                  <ProductionOrderSizeEditor
+                    order={order}
+                    sessionId={session?.id ?? ""}
+                    readOnly={completed || order.status === "CANCELLED" || ambiguousSession}
+                  />
+                }
               />
 
               {/* 슬롯 버튼은 세션 유무와 상관없이 항상 — 세션이 없으면 누르는 순간 자동으로 만든다 */}
@@ -423,166 +410,39 @@ export function ProductionOrdersTab({ completed = false }: { completed?: boolean
 function ProductionOrderComponentList({
   sessionId,
   dashboardRows,
-  firstBlockByRow,
   readOnly,
+  title,
+  details,
 }: {
   sessionId: string;
   dashboardRows: DashboardComponentRow[];
-  firstBlockByRow: Map<string, { date: string; time: string; count: number; lastDate: string }>;
   readOnly: boolean;
+  title: React.ReactNode;
+  details: React.ReactNode;
 }) {
   const selections = useQuery(workSessionFormulaVersionsQuery(sessionId));
-  if (!sessionId) return null;
-  if (selections.isLoading)
-    return <p className="text-xs text-muted-foreground">컴포넌트 불러오는 중…</p>;
-  if (selections.isError)
-    return (
-      <p role="alert" className="text-xs text-destructive">
-        컴포넌트를 불러오지 못했습니다.{" "}
-        <button type="button" className="underline" onClick={() => void selections.refetch()}>
-          재시도
-        </button>
-      </p>
-    );
-  const rows = selections.data ?? [];
-  if (!rows.length)
-    return <p className="text-xs text-muted-foreground">컴포넌트 미지정 · 아래에서 추가하세요.</p>;
   return (
-    <ul className="space-y-2">
-      {rows.map((r) => (
-        <ProductionOrderComponentItem
-          key={r.id}
-          row={r}
-          dashboardRow={dashboardRows.find((d) => d.id === r.id)}
-          block={firstBlockByRow.get(r.id)}
-          readOnly={readOnly}
-        />
-      ))}
-    </ul>
-  );
-}
-
-function ProductionOrderComponentItem({
-  row,
-  dashboardRow,
-  block,
-  readOnly,
-}: {
-  row: import("@/lib/queries").WorkSessionFormulaVersionRow;
-  dashboardRow: DashboardComponentRow | undefined;
-  block: { date: string; time: string; count: number; lastDate: string } | undefined;
-  readOnly: boolean;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const client = useQueryClient();
-  // 마지막 생산 블록 날짜가 오늘(캔버라) 이전이면 생산이 끝난 것으로 표시한다(2026-11-05 요청).
-  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Australia/Sydney" }).format(
-    new Date(),
-  );
-  const produced = Boolean(block && block.lastDate < today);
-  const [removeWarning, setRemoveWarning] = useState<string | null>(null);
-  const remove = useMutation({
-    mutationFn: () => removePlannedComponent(row),
-    onSuccess: (warning) => {
-      setRemoveWarning(warning);
-      if (warning) toast.error(warning);
-    },
-    onError: (error) => toast.error(error.message),
-    onSettled: () => {
-      void invalidateProductionSync(client);
-    },
-  });
-  const reopen = useMutation({
-    mutationFn: () => reopenComponentForProduction(row),
-    onSuccess: () => toast.success("작업 대기공간으로 되돌렸어요"),
-    onError: (error) => toast.error(error.message),
-    onSettled: () => {
-      void invalidateProductionSync(client);
-    },
-  });
-  return (
-    <li className={cn("border px-2 py-2", slotBoxClass(row.slot))}>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="label-caps text-[10px] text-muted-foreground">{row.slot ?? "COMPONENT"}</span>
-        <span className="min-w-0 flex-1 text-sm">
-          {row.formula_versions.formulas.components?.name ?? row.formula_versions.formulas.name}
-        </span>
-        {dashboardRow?.unmodifiedCopy && <CopyWarning formulaId={dashboardRow.formulaId} />}
-        {produced && (
-          <span
-            title="생산 날짜가 지났어요"
-            className="label-caps border border-emerald-600/60 bg-emerald-50 px-1 text-[10px] text-emerald-900 dark:border-emerald-400/50 dark:bg-emerald-950/40 dark:text-emerald-100"
-          >
-            ✓ 생산 완료
-          </span>
-        )}
-        {produced && !readOnly && (
-          <button
-            type="button"
-            title="생산했지만 다른 용도로 써서 다시 만들어야 할 때 — 작업 대기공간으로 되돌립니다"
-            className="border border-border px-1.5 font-mono text-[11px] leading-5 hover:bg-muted"
-            disabled={reopen.isPending}
-            onClick={() => {
-              if (
-                confirm(
-                  `${row.formula_versions.formulas.components?.name ?? row.formula_versions.formulas.name}를 다시 생산 목록에 넣을까요? 이 컴포넌트의 작업 기록(시작/완료 시각·타이머)이 초기화되고 시간 배정이 풀립니다.`,
-                )
-              )
-                reopen.mutate();
-            }}
-          >
-            {reopen.isPending ? "…" : "↻ 다시 생산"}
-          </button>
-        )}
-        <span className="font-mono text-[10px] text-muted-foreground">
-          {block
-            ? `${block.date.slice(5)} ${block.time}${block.count > 1 ? ` +${block.count - 1}` : ""}`
-            : "시간 미배정"}
-        </span>
-        {!readOnly && (
-          <button
-            type="button"
-            title="이 주문에서 컴포넌트 삭제"
-            aria-label="이 주문에서 컴포넌트 삭제"
-            className="border border-border px-1.5 font-mono text-[11px] leading-5 text-muted-foreground hover:border-destructive hover:text-destructive"
-            disabled={remove.isPending}
-            onClick={() => {
-              if (
-                confirm(
-                  `이 주문의 ${row.formula_versions.formulas.components?.name ?? row.formula_versions.formulas.name} 지정을 삭제할까요? 예정 블록도 제거되며 원본 레시피는 유지됩니다.`,
-                )
-              )
-                remove.mutate();
-            }}
-          >
-            {remove.isPending ? "…" : "✕ 삭제"}
-          </button>
-        )}
-      </div>
-      {(remove.isError || removeWarning) && (
+    <>
+      {sessionId && selections.isError && (
         <p role="alert" className="text-xs text-destructive">
-          {remove.error?.message ?? removeWarning}
+          컴포넌트를 불러오지 못했습니다.{" "}
+          <button type="button" className="underline" onClick={() => void selections.refetch()}>
+            재시도
+          </button>
         </p>
       )}
-
-      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-        <ComponentPlanReadout row={row} />
-        {!readOnly && (
-          <button
-            type="button"
-            aria-expanded={expanded}
-            className="ml-auto underline"
-            onClick={() => setExpanded((v) => !v)}
-          >
-            {expanded ? "설정 닫기" : "레시피·수량 설정"}
-          </button>
-        )}
-      </div>
-      {expanded && !readOnly && (
-        <div className="space-y-2">
-          <OrderComponentPlanRow row={row} allowFormulaChange />
-        </div>
-      )}
-    </li>
+      <ProductionComponentTable
+        sessionId={sessionId}
+        rows={selections.data ?? []}
+        readOnly={readOnly}
+        title={title}
+        details={details}
+        allowFormulaChange
+        warning={(id) => {
+          const row = dashboardRows.find((entry) => entry.id === id);
+          return row?.unmodifiedCopy ? <CopyWarning formulaId={row.formulaId} /> : null;
+        }}
+      />
+    </>
   );
 }
