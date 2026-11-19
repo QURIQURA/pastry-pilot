@@ -506,13 +506,13 @@ export function OrderComponentPlanRow({
   );
   const scheduleInputs = lockedSched ? (
     <p className="text-[11px] text-muted-foreground">
-      이 컴포넌트는 이미 여러 조각(분할/단계)으로 배정돼 있어요 — DASHBOARD 타임라인에서 시간을
-      고치세요.
+      이 컴포넌트는 이미 여러 조각(분할/단계)으로 배정돼 있어 기존 배정을 보존하려고 여기서는 일정을
+      바꾸지 않아요.
     </p>
   ) : (
     <div className="space-y-1 border border-dashed border-border p-2">
       <p className="label-caps text-muted-foreground">
-        날짜 · 시간 배정 {oneBlock ? "(타임라인에 배정됨)" : "(비우면 작업 대기공간에 둠)"}
+        날짜 · 시간 배정 {oneBlock ? "(타임라인에 배정됨)" : "(비우면 날짜 미정)"}
       </p>
       <div className="flex flex-wrap items-end gap-2">
         <label className="text-[11px]">

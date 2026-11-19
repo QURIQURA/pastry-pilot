@@ -27,6 +27,7 @@ import {
   usePlannerAvailability,
   usePlannerContextToggle,
 } from "@/components/pilot/PlannerAvailability";
+import { TimelineSettingsPanel, timelineSegments, useTimelineRange } from "./TimelineSettings";
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -334,6 +335,28 @@ export function ProductionDashboard() {
   // YEON OS #4: Planner availability — read-only background context; never blocks scheduling.
   const [showPlanner, setShowPlanner] = usePlannerContextToggle();
   const plannerAvailability = usePlannerAvailability(date, true);
+  const [timelineRange, setTimelineRange] = useTimelineRange();
+  const [timelineSettingsOpen, setTimelineSettingsOpen] = useState(false);
+  const [dailyStart, setDailyStart] = useState("");
+  const [dailyMinutes, setDailyMinutes] = useState("30");
+  // Where a daily task sits among production records: "time" (by start time) or before a work item.
+  const [dailyPlacement, setDailyPlacement] = useState<Record<string, string>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("pilot.production.dailyPlacement.v1") ?? "{}");
+    } catch {
+      return {};
+    }
+  });
+  const placeDaily = (id: string, value: string) =>
+    setDailyPlacement((prev) => {
+      const next = { ...prev, [id]: value };
+      try {
+        localStorage.setItem("pilot.production.dailyPlacement.v1", JSON.stringify(next));
+      } catch {
+        // Per-device convenience only.
+      }
+      return next;
+    });
   const plannerSegments = showPlanner ? segmentsForDate(plannerAvailability.data, date) : null;
   // 컴포넌트 블록이 선택돼 있으면 그쪽이 우선(둘이 동시에 선택되지 않게).
   const selectedDaily = selectedId
@@ -477,6 +500,24 @@ export function ProductionDashboard() {
     const tabs = record.rows.flatMap((id) => tabByRow.get(id) ?? []);
     return tabs.length ? Math.min(...tabs) : 0;
   };
+  // Daily tasks sit before the first open record planned after them, or before a chosen work item.
+  const dailyPosition = (task: DailyTask) => {
+    const start = toMin(task.start_time);
+    const tie = start / 10_000;
+    const placed = dailyPlacement[task.id];
+    if (placed && placed !== "time") {
+      if (placed === "end") return 1e9 + 1;
+      const position = workPosition.get(placed);
+      if (position != null) return position - 0.5 + tie / 10;
+    }
+    const next = productionRecords.find(
+      (record) =>
+        !record.done &&
+        record.block.block_date === task.task_date &&
+        toMin(record.block.start_time) > start,
+    );
+    return next ? recordPosition(next) - 0.5 + tie / 10 : 1e9 + tie;
+  };
   const timelineLanes = workGroups.flatMap((groups, tab) =>
     groups.length > 0 || productionRecords.some((record) => recordLane(record) === tab)
       ? [tab]
@@ -504,8 +545,10 @@ export function ProductionDashboard() {
     const timer = window.setInterval(tick, 15_000);
     return () => window.clearInterval(timer);
   }, [hasRunningRecord]);
-  const availableSegments = (segmentsForDate(plannerAvailability.data, date) ?? []).filter(
-    (segment) => segment.state === "available",
+  const { segments: availableSegments, fallback: rangeFallback } = timelineSegments(
+    timelineRange,
+    showPlanner,
+    segmentsForDate(plannerAvailability.data, date),
   );
   const recordMinute = (stamp: string | Date) => {
     const instant = new Date(stamp);
@@ -962,7 +1005,12 @@ export function ProductionDashboard() {
 
   // 새 데일리 태스크 시작 시각 — 오늘 날짜를 보고 있으면 "생성하는 현재 시각"(2026-11-09 사용자
   // 요청), 다른 날짜면 그날 마지막 데일리 뒤(없으면 09:00)에 넣는다.
-  const quickAddDaily = (name: string, minutes: number, template?: DailyTaskTemplate) => {
+  const quickAddDaily = (
+    name: string,
+    minutes: number,
+    template?: DailyTaskTemplate,
+    explicitStart?: number,
+  ) => {
     const trimmed = name.trim();
     if (!trimmed) return;
     const dur = Math.max(SNAP_MIN, Math.ceil(minutes / SNAP_MIN) * SNAP_MIN);
@@ -970,7 +1018,7 @@ export function ProductionDashboard() {
     const now = new Date();
     const nowMin = now.getHours() * 60 + now.getMinutes();
     const baseMin = date === todayStr ? nowMin : lastEnd > 0 ? lastEnd : 9 * 60;
-    const startMin = clamp(baseMin, DAY_START_MIN, DAY_END_MIN - dur);
+    const startMin = clamp(explicitStart ?? baseMin, DAY_START_MIN, DAY_END_MIN - dur);
     createDaily.mutate({
       name: trimmed,
       startMin,
@@ -1082,7 +1130,32 @@ export function ProductionDashboard() {
         </div>
         {date >= todayStr && (
           <div className="border border-border bg-card p-3">
-            <h3 className="label-caps text-xs">실제 작업 타임라인</h3>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="label-caps text-xs">실제 작업 타임라인</h3>
+              <button
+                type="button"
+                className={cn(buttonClass, timelineSettingsOpen && "bg-secondary")}
+                aria-expanded={timelineSettingsOpen}
+                onClick={() => setTimelineSettingsOpen((open) => !open)}
+              >
+                ⚙ 타임라인 설정
+              </button>
+            </div>
+            {timelineSettingsOpen && (
+              <TimelineSettingsPanel
+                range={timelineRange}
+                onRange={setTimelineRange}
+                showPlanner={showPlanner}
+                onShowPlanner={setShowPlanner}
+                query={plannerAvailability}
+                segments={plannerSegments}
+                work={[
+                  ...dayBlocks.map((b) => ({ start: toMin(b.start_time), end: effectiveEnd(b) })),
+                  ...dayDailies.map((t) => ({ start: toMin(t.start_time), end: dailyEnd(t) })),
+                ]}
+                onClose={() => setTimelineSettingsOpen(false)}
+              />
+            )}
             <div className="mt-2 flex gap-2">
               {availableSegments.length > 0 && (
                 <div className="w-12 shrink-0 space-y-1" aria-hidden>
@@ -1150,8 +1223,16 @@ export function ProductionDashboard() {
                 })}
               </div>
             </div>
+            {rangeFallback && availableSegments.length > 0 && (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Planner 가용시간이 없어 기본 시간({timelineRange.start}–{timelineRange.end})으로
+                보여요
+              </p>
+            )}
             {!availableSegments.length && (
-              <p className="mt-1 text-xs text-muted-foreground">확인된 가용시간 없음</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                표시할 시간이 없어요 · 타임라인 설정에서 범위를 지정하세요
+              </p>
             )}
             {productionRecords
               .filter(
@@ -1307,7 +1388,93 @@ export function ProductionDashboard() {
             </div>
           )}
           <aside className="space-y-2 min-w-0">
-            {showQueue && (
+            {date >= todayStr && (
+              <section className="space-y-2 border border-border bg-card p-3">
+                <h3 className="label-caps text-xs">DAILY TASK · QUICK ADD</h3>
+                <form
+                  className="flex flex-wrap items-end gap-1.5"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    quickAddDaily(
+                      dailyName,
+                      Number(dailyMinutes) || DEFAULT_DURATION_MIN,
+                      undefined,
+                      dailyStart ? toMin(dailyStart) : undefined,
+                    );
+                    setDailyStart("");
+                  }}
+                >
+                  <input
+                    aria-label="데일리 작업 이름"
+                    className={cn(inputClass, "min-w-0 flex-1")}
+                    placeholder="작업 이름 (예: 오븐 청소)"
+                    value={dailyName}
+                    onChange={(e) => setDailyName(e.target.value)}
+                  />
+                  <input
+                    type="time"
+                    aria-label="데일리 작업 시작"
+                    title="비우면 지금(오늘) 또는 마지막 데일리 뒤"
+                    className={inputClass}
+                    value={dailyStart}
+                    onChange={(e) => setDailyStart(e.target.value)}
+                  />
+                  <input
+                    type="number"
+                    min={SNAP_MIN}
+                    step={SNAP_MIN}
+                    aria-label="데일리 작업 시간(분)"
+                    className={cn(inputClass, "!w-16")}
+                    value={dailyMinutes}
+                    onChange={(e) => setDailyMinutes(e.target.value)}
+                  />
+                  <button
+                    type="submit"
+                    className={buttonClass}
+                    disabled={createDaily.isPending || !dailyName.trim()}
+                  >
+                    + ADD
+                  </button>
+                  <label className="flex w-full items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={dailySave}
+                      onChange={(e) => setDailySave(e.target.checked)}
+                    />
+                    라이브러리에도 저장
+                  </label>
+                </form>
+                {dailyTemplates.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {dailyTemplates.map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        className={cn(buttonClass, "text-[11px]")}
+                        style={{ borderLeft: `3px solid ${DAILY_COLOR.accent}` }}
+                        disabled={createDaily.isPending}
+                        onClick={() =>
+                          quickAddDaily(
+                            t.name,
+                            t.default_minutes,
+                            t,
+                            dailyStart ? toMin(dailyStart) : undefined,
+                          )
+                        }
+                      >
+                        + {t.name} · {t.default_minutes}분
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {(createDaily.error || updateDaily.error || deleteDaily.error) && (
+                  <p role="alert" className="text-xs text-destructive">
+                    {(createDaily.error ?? updateDaily.error ?? deleteDaily.error)?.message}
+                  </p>
+                )}
+              </section>
+            )}
+            {(showQueue || (date >= todayStr && dayDailies.length > 0)) && (
               <section className="border border-border bg-card p-3">
                 <h3 className="font-semibold">생산 기록</h3>
                 {[
@@ -1338,6 +1505,32 @@ export function ProductionDashboard() {
                         </p>
                       ),
                     })),
+                  ...dayDailies.map((task) => ({
+                    position: dailyPosition(task),
+                    node: (
+                      <DailyRecordRow
+                        key={task.id}
+                        task={task}
+                        placement={dailyPlacement[task.id] ?? "time"}
+                        workItems={workGroups.flat().map((members, index) => {
+                          const row = rowById.get(members[0]!);
+                          return {
+                            id: members[0]!,
+                            label: `${index + 1}. ${row?.componentName ?? ""} ${row?.order.order_number ?? ""}`,
+                          };
+                        })}
+                        busy={updateDaily.isPending || deleteDaily.isPending}
+                        onPlace={(value) => placeDaily(task.id, value)}
+                        onTime={(startMin, endMin) =>
+                          updateDaily.mutate({ task, startMin, endMin })
+                        }
+                        onDelete={() => {
+                          if (confirm(`${task.name} 데일리 작업을 삭제할까요?`))
+                            deleteDaily.mutate(task);
+                        }}
+                      />
+                    ),
+                  })),
                 ]
                   // Stable sort keeps a split component's parts in timeline order.
                   .sort((a, b) => a.position - b.position)
@@ -1379,1046 +1572,6 @@ export function ProductionDashboard() {
           </aside>
         </div>
       </section>
-      <details className="space-y-3">
-        <summary className="cursor-pointer text-sm">시간 배정 및 작업 대기공간</summary>
-
-        {dateOnlyRows.length > 0 && (
-          <section className="space-y-2 border border-border bg-card p-3">
-            <h3 className="label-caps text-xs">{date} · 시간 미정</h3>
-            {dateOnlyRows.map((row) => (
-              <p key={row.id} className="text-xs">
-                {row.order.order_number} · {row.componentName} · {sizeText(row)}
-              </p>
-            ))}
-          </section>
-        )}
-
-        <div className="space-y-3">
-          {/* ── 작업 대기공간 (맨 위 1열) ── */}
-          <section
-            className={cn(
-              "space-y-3 border bg-card p-3",
-              poolOver ? "border-foreground bg-muted" : "border-border",
-            )}
-            onDragOver={(e) => {
-              e.preventDefault();
-              e.dataTransfer.dropEffect = "move";
-              setPoolOver(true);
-            }}
-            onDragLeave={(e) => {
-              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setPoolOver(false);
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              setPoolOver(false);
-              try {
-                const payload = JSON.parse(e.dataTransfer.getData("text/plain")) as DragPayload;
-                if (payload.kind === "daily") {
-                  const task = (dailyQuery.data ?? []).find((t) => t.id === payload.taskId);
-                  if (task) deleteDaily.mutate(task);
-                  return;
-                }
-                if (payload.kind !== "block") return;
-                const blk = blocks.find((b) => b.id === payload.blockId);
-                if (blk) removeBlock.mutate(blk);
-              } catch {
-                /* 다른 드래그는 무시 */
-              }
-            }}
-          >
-            <div>
-              <p className="label-caps text-xs">작업 대기공간</p>
-              <p className="font-mono text-[11px] text-muted-foreground">
-                {poolCount === 0
-                  ? "미배정 컴포넌트가 없어요"
-                  : `${poolCount}개 대기 중 · 타임라인으로 끌어다 놓거나 ADD`}
-                {" · 블록을 여기로 끌면 시간 배정 해제(데일리 태스크는 삭제)"}
-              </p>
-            </div>
-            {overdueIds.size > 0 && (
-              <div className="flex flex-wrap items-center gap-2 border border-[#C0392B] bg-[#FBEAE8] px-3 py-2 text-xs text-[#8E2A20]">
-                <span>
-                  ⚠ 일정이 지났는데 완료 처리 안 된 컴포넌트 {overdueIds.size}개 — 이미 끝낸
-                  작업이면 완료 처리하세요.
-                </span>
-                <button
-                  type="button"
-                  className={cn(buttonClass, "!min-h-[24px] px-2 text-[11px]")}
-                  disabled={completeRows.isPending}
-                  onClick={() => {
-                    const targets = rows.filter((r) => overdueIds.has(r.id));
-                    if (window.confirm(`지난 일정 ${targets.length}개를 모두 완료 처리할까요?`))
-                      completeRows.mutate(targets);
-                  }}
-                >
-                  지난 일정 모두 완료
-                </button>
-              </div>
-            )}
-            {components.isLoading ? (
-              <p className="font-mono text-xs uppercase text-muted-foreground">LOADING…</p>
-            ) : poolGroups.length === 0 ? (
-              <p className="font-mono text-xs text-muted-foreground">
-                미배정 컴포넌트가 없어요. ORDERS 탭에서 오더에 컴포넌트를 지정하면 여기에 쌓여요.
-              </p>
-            ) : (
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {poolGroups.map((g) => {
-                  const color = orderColor(g.order.id);
-                  const delivery = formatDelivery(g.order.pickupAt, g.order.eventDate);
-                  return (
-                    <div key={g.order.id} className="space-y-1.5">
-                      <p className="flex flex-wrap items-center gap-1.5 text-xs">
-                        <span
-                          className="label-caps px-1.5 py-0.5 text-[11px]"
-                          style={{ background: color.bg, color: color.text }}
-                        >
-                          {g.order.order_number}
-                        </span>
-                        <span className="text-muted-foreground">
-                          {orderTitle(g.order.customerName, g.order.productName)}
-                        </span>
-                        <OrderFlagBoxes
-                          dietary={dietaryOf(g.order.id)}
-                          leastLiked={g.order.leastLiked}
-                        />
-                        {delivery && (
-                          <span className="ml-auto font-mono text-[11px]">🚚 {delivery}</span>
-                        )}
-                        {g.rows.some((r) => (blocksByRow.get(r.id) ?? []).length > 0) && (
-                          <button
-                            type="button"
-                            className={cn(buttonClass, "!min-h-[20px] px-1.5 text-[10px]")}
-                            disabled={completeRows.isPending}
-                            title="이 오더에서 시간 배정된 컴포넌트를 모두 완료 처리"
-                            onClick={() => {
-                              const targets = g.rows.filter(
-                                (r) => (blocksByRow.get(r.id) ?? []).length > 0,
-                              );
-                              if (
-                                window.confirm(
-                                  `${g.order.order_number}의 배정된 컴포넌트 ${targets.length}개를 완료 처리할까요?`,
-                                )
-                              )
-                                completeRows.mutate(targets);
-                            }}
-                          >
-                            ✓ 전체 완료
-                          </button>
-                        )}
-                      </p>
-                      {g.rows.map((r) => {
-                        const placed = (blocksByRow.get(r.id) ?? []).filter(
-                          (b) => b.block_date === date,
-                        );
-                        const isPlaced = placed.length > 0;
-                        // 보고 있는 날짜가 아닌 다른 날짜에 배정된 경우 — 목록에서 사라지지 않게 날짜를 표기한다.
-                        const elsewhere = isPlaced
-                          ? []
-                          : (blocksByRow.get(r.id) ?? []).filter((b) => b.block_date !== date);
-                        const isElsewhere = elsewhere.length > 0;
-                        const size = sizeText(r);
-                        return (
-                          <div
-                            key={r.id}
-                            draggable={!isPlaced && !isElsewhere}
-                            onDragStart={(e) => {
-                              e.dataTransfer.setData(
-                                "text/plain",
-                                JSON.stringify({ kind: "row", rowId: r.id } satisfies DragPayload),
-                              );
-                              e.dataTransfer.effectAllowed = "move";
-                            }}
-                            onClick={() => {
-                              // 배정된 컴포넌트는 그 블록을 바로 선택해서 날짜·시간 수정 패널이 뜨게 한다.
-                              if (isElsewhere) {
-                                setSelectedId(elsewhere[0]!.id);
-                                setDate(elsewhere[0]!.block_date);
-                                return;
-                              }
-                              setSelectedId(isPlaced ? placed[0]!.id : null);
-                              setFocusRowId(r.id);
-                            }}
-                            className={cn(
-                              "flex items-center gap-2 border border-border bg-background px-2 py-1",
-                              isPlaced || isElsewhere ? "cursor-pointer opacity-50" : "cursor-grab",
-                            )}
-                            style={{ borderLeft: `3px solid ${color.accent}` }}
-                          >
-                            <div className="min-w-0 flex-1">
-                              <p className="flex items-center gap-1 truncate text-xs">
-                                <span className="label-caps text-[10px] text-muted-foreground">
-                                  {r.slot ?? "CORE"}
-                                </span>
-                                <span
-                                  className={cn(
-                                    "truncate",
-                                    (isPlaced || isElsewhere) && "line-through",
-                                  )}
-                                >
-                                  {r.componentName}
-                                </span>
-                                {r.unmodifiedCopy && <CopyWarning formulaId={r.formulaId} />}
-                              </p>
-                              {(size || isPlaced || isElsewhere) && (
-                                <p className="truncate font-mono text-[10px] text-muted-foreground">
-                                  {size}
-                                  {isPlaced &&
-                                    `${size ? " · " : ""}✓ ${placed
-                                      .map((b) => b.start_time.slice(0, 5))
-                                      .join(", ")} 배정됨`}
-                                  {isElsewhere &&
-                                    `${size ? " · " : ""}📅 ${elsewhere
-                                      .map(
-                                        (b) =>
-                                          `${b.block_date.slice(5).replace("-", "/")} ${b.start_time.slice(0, 5)}`,
-                                      )
-                                      .join(", ")} 배정됨 · 눌러서 이동`}
-                                </p>
-                              )}
-                            </div>
-                            {overdueIds.has(r.id) && (
-                              <span
-                                className="shrink-0 border border-[#C0392B] px-1 font-mono text-[10px] text-[#C0392B]"
-                                title="일정이 지났는데 완료 처리되지 않았어요"
-                              >
-                                ⚠ 지연
-                              </span>
-                            )}
-                            {(isPlaced || isElsewhere) && (
-                              <button
-                                type="button"
-                                className={cn(buttonClass, "!min-h-[24px] px-1.5 text-[10px]")}
-                                disabled={completeRows.isPending}
-                                title="타이머 없이 끝낸 작업 — 완료 처리"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  completeRows.mutate([r]);
-                                }}
-                              >
-                                ✓ 완료
-                              </button>
-                            )}
-                            {!isPlaced && !isElsewhere && (
-                              <button
-                                type="button"
-                                className={cn(buttonClass, "!min-h-[24px] px-1.5 text-[10px]")}
-                                disabled={busy}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  quickAdd(r);
-                                }}
-                              >
-                                ADD
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </section>
-
-          <div className="grid gap-3 lg:grid-cols-[minmax(0,1.15fr)_minmax(360px,1fr)] lg:items-start">
-            {/* ── 데일리 타임라인 ── */}
-            <section className="min-w-0 space-y-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  className={buttonClass}
-                  onClick={() => setDate(addDays(date, -1))}
-                  aria-label="이전 날"
-                >
-                  ‹
-                </button>
-                <input
-                  type="date"
-                  className={cn(inputClass, "!w-40")}
-                  value={date}
-                  onChange={(e) => e.target.value && setDate(e.target.value)}
-                />
-                <button
-                  type="button"
-                  className={buttonClass}
-                  onClick={() => setDate(addDays(date, 1))}
-                  aria-label="다음 날"
-                >
-                  ›
-                </button>
-                <button
-                  type="button"
-                  className={buttonClass}
-                  onClick={() => setDate(toLocalDateString())}
-                >
-                  TODAY
-                </button>
-                <span className="font-mono text-sm">
-                  {date} ({koreanWeekdayShort(date)})
-                </span>
-                <span className="font-mono text-[11px] text-muted-foreground">
-                  {dayBlocks.length}개 블록 · {dayDailies.length}개 데일리
-                </span>
-              </div>
-              <PlannerCapacityStrip
-                on={showPlanner}
-                onToggle={setShowPlanner}
-                query={plannerAvailability}
-                segments={plannerSegments}
-                work={[
-                  ...dayBlocks.map((b) => ({ start: toMin(b.start_time), end: effectiveEnd(b) })),
-                  ...dayDailies.map((t) => ({ start: toMin(t.start_time), end: dailyEnd(t) })),
-                ]}
-              />
-
-              {/* ── DAILY / QUICK ADD: 데일리 태스크 + 시간 배정 전 컴포넌트 여러 개 한 번에 ── */}
-              <div className="space-y-2 border border-border bg-card p-3">
-                <p className="label-caps text-xs">DAILY TASKS · QUICK ADD</p>
-                <div className="flex flex-wrap items-start gap-2">
-                  <form
-                    className="flex min-w-[240px] flex-1 flex-wrap items-center gap-2"
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      quickAddDaily(dailyName, DEFAULT_DURATION_MIN);
-                    }}
-                  >
-                    <input
-                      className={cn(inputClass, "min-w-[160px] flex-1")}
-                      placeholder="즉석 작업 이름 (예: 오븐 청소)"
-                      value={dailyName}
-                      onChange={(e) => setDailyName(e.target.value)}
-                    />
-                    <label className="flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
-                      <input
-                        type="checkbox"
-                        checked={dailySave}
-                        onChange={(e) => setDailySave(e.target.checked)}
-                      />
-                      라이브러리에도 저장
-                    </label>
-                    <button
-                      type="submit"
-                      className={cn(buttonClass, "!min-h-[30px] px-2 text-[11px]")}
-                      disabled={busy || !dailyName.trim()}
-                    >
-                      + ADD
-                    </button>
-                  </form>
-
-                  <details className="relative">
-                    <summary
-                      className={cn(buttonClass, "!min-h-[30px] cursor-pointer px-2 text-[11px]")}
-                    >
-                      대기 중 컴포넌트에서 선택
-                      {pickedRowIds.length > 0 ? ` (${pickedRowIds.length})` : ""} ▾
-                    </summary>
-                    <div className="absolute right-0 z-20 mt-1 max-h-72 w-72 space-y-2 overflow-y-auto border border-border bg-background p-2 shadow-md">
-                      {poolGroups.length === 0 ? (
-                        <p className="font-mono text-[11px] text-muted-foreground">
-                          시간 배정 전인 컴포넌트가 없어요
-                        </p>
-                      ) : (
-                        poolGroups.map((g) => (
-                          <div key={g.order.id} className="space-y-0.5">
-                            <p className="label-caps text-[10px] text-muted-foreground">
-                              {g.order.order_number} ·{" "}
-                              {orderTitle(g.order.customerName, g.order.productName)}
-                              {dietaryOf(g.order.id).length > 0
-                                ? ` · ${dietaryOf(g.order.id).join(", ")}`
-                                : ""}
-                              {formatDelivery(g.order.pickupAt, g.order.eventDate)
-                                ? ` · 🚚 ${formatDelivery(g.order.pickupAt, g.order.eventDate)}`
-                                : ""}
-                            </p>
-                            {g.rows.map((r) => (
-                              <label key={r.id} className="flex items-center gap-1.5 text-xs">
-                                <input
-                                  type="checkbox"
-                                  checked={pickedRowIds.includes(r.id)}
-                                  onChange={(e) =>
-                                    setPickedRowIds((cur) =>
-                                      e.target.checked
-                                        ? [...cur, r.id]
-                                        : cur.filter((id) => id !== r.id),
-                                    )
-                                  }
-                                />
-                                <span className="label-caps w-12 shrink-0 text-[10px] text-muted-foreground">
-                                  {r.slot ?? "CORE"}
-                                </span>
-                                <span className="truncate">{r.componentName}</span>
-                                {r.unmodifiedCopy && <CopyWarning formulaId={r.formulaId} />}
-                              </label>
-                            ))}
-                          </div>
-                        ))
-                      )}
-                      <button
-                        type="button"
-                        className={cn(buttonClass, "!min-h-[28px] w-full text-[11px]")}
-                        disabled={busy || pickedRowIds.length === 0}
-                        onClick={() => void addRowsToDay(pickedRowIds)}
-                      >
-                        선택한 {pickedRowIds.length}개를 {date} 타임라인에 추가
-                      </button>
-                    </div>
-                  </details>
-                </div>
-
-                {dailyTemplates.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {dailyTemplates.map((t) => (
-                      <div
-                        key={t.id}
-                        draggable
-                        onDragStart={(e) => {
-                          e.dataTransfer.setData(
-                            "text/plain",
-                            JSON.stringify({
-                              kind: "dailyNew",
-                              templateId: t.id,
-                            } satisfies DragPayload),
-                          );
-                          e.dataTransfer.effectAllowed = "move";
-                        }}
-                        className="flex cursor-grab items-center gap-1.5 border border-border bg-background px-2 py-1"
-                        style={{ borderLeft: `3px solid ${DAILY_COLOR.accent}` }}
-                      >
-                        <span className="text-xs">{t.name}</span>
-                        <span className="font-mono text-[10px] text-muted-foreground">
-                          {t.default_minutes}분
-                        </span>
-                        <button
-                          type="button"
-                          className={cn(buttonClass, "!min-h-[22px] px-1.5 text-[10px]")}
-                          disabled={busy}
-                          onClick={() => quickAddDaily(t.name, t.default_minutes, t)}
-                        >
-                          ADD
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div
-                className="relative border border-border bg-card"
-                style={{ height: gridHeight, paddingLeft: 48 }}
-              >
-                {plannerSegments && (
-                  <PlannerAvailabilityLayer
-                    segments={plannerSegments}
-                    pxPerMin={PX_PER_MIN}
-                    left={48}
-                  />
-                )}
-                {HOURS.map((h) => (
-                  <div
-                    key={h}
-                    className="absolute left-0 right-0 border-t border-border"
-                    style={{ top: (h - DAY_START_MIN / 60) * PX_PER_HOUR }}
-                  >
-                    <span className="absolute left-2 top-0.5 font-mono text-[11px] text-muted-foreground">
-                      {String(h).padStart(2, "0")}:00
-                    </span>
-                  </div>
-                ))}
-
-                <div className="flex h-full">
-                  <div
-                    ref={gridRef}
-                    className="relative h-full w-[68%]"
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      e.dataTransfer.dropEffect = "move";
-                    }}
-                    onDrop={onGridDrop}
-                    onClick={() => {
-                      setSelectedId(null);
-                      setSelectedDailyId(null);
-                    }}
-                  >
-                    {visibleBlocks.map((b) => {
-                      const row = rowById.get(b.work_session_formula_version_id);
-                      if (!row) return null;
-                      const merged = mergeGroups.primaries.get(b.id);
-                      const color = orderColor(row.order.id);
-                      const start = toMin(b.start_time);
-                      const end = effectiveEnd(b);
-                      const t = blockStack.tops.get(b.id) ?? { cardTop: 0, endTop: 0 };
-                      const lane = blockStack.lanes.get(b.id) ?? 0;
-                      const gutter = blockStack.laneCount * LANE_W + 2;
-                      const isSelected = b.id === selectedId;
-                      return (
-                        <div key={b.id}>
-                          {/* 진행 구간 선 — 시작 카드에서 종료 줄까지 같은 색으로 이어진다 */}
-                          <div
-                            className="pointer-events-none absolute"
-                            style={{
-                              left: lane * LANE_W + 2,
-                              top: t.cardTop,
-                              height: Math.max(t.endTop + END_ROW_H / 2 - t.cardTop, 4),
-                              width: 4,
-                              background: color.accent,
-                            }}
-                          />
-                          <div
-                            ref={measureRef}
-                            data-measure-id={b.id}
-                            role="button"
-                            tabIndex={0}
-                            draggable={!resize}
-                            onDragStart={(e) => {
-                              const rect = e.currentTarget.getBoundingClientRect();
-                              const offsetMin = ((e.clientY - rect.top) / PX_PER_HOUR) * 60;
-                              e.dataTransfer.setData(
-                                "text/plain",
-                                JSON.stringify({
-                                  kind: "block",
-                                  blockId: b.id,
-                                  offsetMin,
-                                } satisfies DragPayload),
-                              );
-                              e.dataTransfer.effectAllowed = "move";
-                            }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedId(b.id);
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault();
-                                setSelectedId(b.id);
-                              }
-                            }}
-                            className={cn(
-                              "absolute cursor-grab text-left",
-                              isSelected && "outline outline-2 outline-foreground",
-                            )}
-                            style={{
-                              top: t.cardTop,
-                              left: gutter + 4,
-                              right: 2,
-                              color: color.text,
-                            }}
-                          >
-                            {/* 시작 줄만 색으로 채운다 — 시각 · 오더 · 슬롯 · 컴포넌트 */}
-                            <div
-                              className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border border-border px-2 py-1"
-                              style={{ background: color.bg }}
-                            >
-                              <span className="font-mono text-[11px] opacity-80">{hm(start)}</span>
-                              <span className="min-w-0 flex-1 break-words text-xs font-medium">
-                                <span className="font-mono text-[10px] opacity-70">[start]</span>{" "}
-                                <span className="font-mono text-[11px] opacity-80">
-                                  {merged
-                                    ? `MERGED ${merged.orders.length} · ${merged.orders.join(" + ")}`
-                                    : row.order.order_number}
-                                </span>{" "}
-                                <span className="label-caps mr-1 text-[10px] opacity-70">
-                                  {row.slot ?? "CORE"}
-                                </span>
-                                {blockTitle(b, row)}
-                              </span>
-                              <PlannerConflictChip
-                                segments={plannerSegments}
-                                start={start}
-                                end={end}
-                              />
-                            </div>
-                            {/* 타이머 — 박스 없이 텍스트로 */}
-                            <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-2 pt-0.5">
-                              <BlockTimerChip
-                                part="timer"
-                                block={b}
-                                row={row}
-                                onStarted={ensureSessionStarted}
-                              />
-                            </div>
-                            <div className="px-2">
-                              <BlockTimerChip part="note" block={b} row={row} />
-                            </div>
-                          </div>
-                          {/* 종료 줄 — 위아래로 끌면 길이 조절 */}
-                          <div
-                            className="absolute flex cursor-ns-resize items-center gap-1 px-2 font-mono text-[11px] opacity-70"
-                            title="끌어서 종료 시각 조절"
-                            draggable={false}
-                            style={{
-                              top: t.endTop,
-                              left: gutter + 4,
-                              right: 2,
-                              height: END_ROW_H,
-                              color: color.text,
-                            }}
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                            }}
-                            onPointerDown={(e) => startResize(e, b)}
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <span>{hm(end)}</span>
-                            <span>■ [end]</span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* DAILY 칸 — 제품과 무관한 작업. 컴포넌트 블록과 겹치지 않게 오른쪽 별도 칸. */}
-                  <div
-                    className="relative h-full w-[32%] border-l border-dashed border-border bg-muted/30"
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      e.dataTransfer.dropEffect = "move";
-                    }}
-                    onDrop={onDailyDrop}
-                    onClick={() => setSelectedDailyId(null)}
-                  >
-                    <span className="label-caps pointer-events-none absolute right-1 top-0.5 text-[10px] text-muted-foreground">
-                      DAILY
-                    </span>
-                    {dayDailies.map((t) => {
-                      const start = toMin(t.start_time);
-                      const end = dailyEnd(t);
-                      const tp = dailyStack.tops.get(t.id) ?? { cardTop: 0, endTop: 0 };
-                      const lane = dailyStack.lanes.get(t.id) ?? 0;
-                      const gutter = dailyStack.laneCount * LANE_W + 2;
-                      const isSel = t.id === selectedDaily?.id;
-                      return (
-                        <div key={t.id}>
-                          <div
-                            className="pointer-events-none absolute"
-                            style={{
-                              left: lane * LANE_W + 2,
-                              top: tp.cardTop,
-                              height: Math.max(tp.endTop + END_ROW_H / 2 - tp.cardTop, 4),
-                              width: 4,
-                              background: DAILY_COLOR.accent,
-                            }}
-                          />
-                          <div
-                            ref={measureRef}
-                            data-measure-id={t.id}
-                            role="button"
-                            tabIndex={0}
-                            draggable={!resize}
-                            onDragStart={(e) => {
-                              const rect = e.currentTarget.getBoundingClientRect();
-                              e.dataTransfer.setData(
-                                "text/plain",
-                                JSON.stringify({
-                                  kind: "daily",
-                                  taskId: t.id,
-                                  offsetMin: ((e.clientY - rect.top) / PX_PER_HOUR) * 60,
-                                } satisfies DragPayload),
-                              );
-                              e.dataTransfer.effectAllowed = "move";
-                            }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedId(null);
-                              setSelectedDailyId(t.id);
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault();
-                                setSelectedId(null);
-                                setSelectedDailyId(t.id);
-                              }
-                            }}
-                            className={cn(
-                              "absolute cursor-grab px-2 py-1 text-left",
-                              isSel
-                                ? "outline outline-2 outline-foreground"
-                                : "border border-border",
-                            )}
-                            style={{
-                              top: tp.cardTop,
-                              left: gutter + 4,
-                              right: 2,
-                              background: DAILY_COLOR.bg,
-                              color: DAILY_COLOR.text,
-                            }}
-                          >
-                            <p className="break-words text-xs font-medium">
-                              <span className="mr-2 font-mono text-[11px] opacity-80">
-                                {hm(start)}
-                              </span>
-                              <span className="mr-1 font-mono text-[10px] opacity-70">[start]</span>
-                              {t.order_id && (
-                                <span className="label-caps mr-1 text-[10px] opacity-70">
-                                  {
-                                    (ordersData.data ?? []).find((o) => o.id === t.order_id)
-                                      ?.order_number
-                                  }
-                                </span>
-                              )}
-                              {t.name}
-                            </p>
-                            <PlannerConflictChip
-                              segments={plannerSegments}
-                              start={start}
-                              end={end}
-                            />
-                          </div>
-                          <div
-                            className="absolute flex cursor-ns-resize items-center gap-1 px-2 font-mono text-[11px] opacity-70"
-                            title="끌어서 종료 시각 조절"
-                            draggable={false}
-                            style={{
-                              top: tp.endTop,
-                              left: gutter + 4,
-                              right: 2,
-                              height: END_ROW_H,
-                              color: DAILY_COLOR.text,
-                            }}
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                            }}
-                            onPointerDown={(e) => startDailyResize(e, t)}
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <span>{hm(end)}</span>
-                            <span>■ [end]</span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            {/* ── 컴포넌트 디테일 창 (선택한 컴포넌트 하나만) ── */}
-            <aside className="min-w-0 space-y-3 lg:sticky lg:top-2" aria-label="컴포넌트 디테일">
-              {selectedDaily ? (
-                <div
-                  key={`${selectedDaily.id}-${selectedDaily.updated_at}`}
-                  className="space-y-2 border border-border bg-card p-3"
-                >
-                  <p className="label-caps text-[11px] text-muted-foreground">
-                    DAILY TASK · {selectedDaily.task_date} 의 Daily Project 하위 플래너 TASK
-                  </p>
-                  <div className="flex flex-wrap items-end gap-2">
-                    <label className="min-w-[180px] flex-1 space-y-1">
-                      <span className="label-caps block text-[11px] text-muted-foreground">
-                        NAME
-                      </span>
-                      <input
-                        className={inputClass}
-                        defaultValue={selectedDaily.name}
-                        onBlur={(e) => {
-                          const v = e.target.value.trim();
-                          if (v && v !== selectedDaily.name)
-                            updateDaily.mutate({ task: selectedDaily, name: v });
-                        }}
-                      />
-                    </label>
-                    <label className="space-y-1">
-                      <span className="label-caps block text-[11px] text-muted-foreground">
-                        DATE
-                      </span>
-                      <input
-                        type="date"
-                        className={cn(inputClass, "!w-40")}
-                        defaultValue={selectedDaily.task_date}
-                        onBlur={(e) => {
-                          if (e.target.value && e.target.value !== selectedDaily.task_date)
-                            updateDaily.mutate({ task: selectedDaily, day: e.target.value });
-                        }}
-                      />
-                    </label>
-                    <label className="space-y-1">
-                      <span className="label-caps block text-[11px] text-muted-foreground">
-                        START
-                      </span>
-                      <input
-                        type="time"
-                        step={300}
-                        className={cn(inputClass, "!w-36 min-w-[9rem]")}
-                        defaultValue={selectedDaily.start_time.slice(0, 5)}
-                        onBlur={(e) => {
-                          if (!e.target.value) return;
-                          const m = toMin(e.target.value);
-                          if (
-                            m !== toMin(selectedDaily.start_time) &&
-                            m < toMin(selectedDaily.end_time)
-                          )
-                            updateDaily.mutate({ task: selectedDaily, startMin: m });
-                        }}
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      title="현재 시각 적용"
-                      className={cn(buttonClass, "!min-h-[36px] px-2 text-[11px]")}
-                      disabled={busy}
-                      onClick={() => {
-                        const m = nowMin();
-                        const dur = toMin(selectedDaily.end_time) - toMin(selectedDaily.start_time);
-                        if (
-                          m < toMin(selectedDaily.end_time) &&
-                          selectedDaily.task_date === todayStr
-                        )
-                          updateDaily.mutate({ task: selectedDaily, startMin: m });
-                        else
-                          updateDaily.mutate({
-                            task: selectedDaily,
-                            day: todayStr,
-                            startMin: m,
-                            endMin: m + dur,
-                          });
-                      }}
-                    >
-                      지금
-                    </button>
-                    <label className="space-y-1">
-                      <span className="label-caps block text-[11px] text-muted-foreground">
-                        END
-                      </span>
-                      <input
-                        type="time"
-                        step={300}
-                        className={cn(inputClass, "!w-36 min-w-[9rem]")}
-                        defaultValue={selectedDaily.end_time.slice(0, 5)}
-                        onBlur={(e) => {
-                          if (!e.target.value) return;
-                          const m = toMin(e.target.value);
-                          if (
-                            m !== toMin(selectedDaily.end_time) &&
-                            m > toMin(selectedDaily.start_time)
-                          )
-                            updateDaily.mutate({ task: selectedDaily, endMin: m });
-                        }}
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      title="현재 시각 적용"
-                      className={cn(buttonClass, "!min-h-[36px] px-2 text-[11px]")}
-                      disabled={busy}
-                      onClick={() => {
-                        const m = nowMin();
-                        if (m > toMin(selectedDaily.start_time))
-                          updateDaily.mutate({ task: selectedDaily, day: todayStr, endMin: m });
-                        else setWarning("지금 시각이 시작 시각보다 빨라서 END에 적용할 수 없어요.");
-                      }}
-                    >
-                      지금
-                    </button>
-                    <button
-                      type="button"
-                      className={cn(buttonClass, "hover:text-destructive")}
-                      disabled={busy}
-                      onClick={() => {
-                        if (confirm("이 데일리 태스크와 플래너 TASK를 삭제할까요?"))
-                          deleteDaily.mutate(selectedDaily);
-                      }}
-                    >
-                      DELETE
-                    </button>
-                  </div>
-                  <label className="block space-y-1">
-                    <span className="label-caps block text-[11px] text-muted-foreground">
-                      LINK TO ORDER (연결하면 플래너 TASK가 그 오더 프로젝트로 이동)
-                    </span>
-                    <select
-                      className={inputClass}
-                      value={selectedDaily.order_id ?? ""}
-                      onChange={(e) =>
-                        updateDaily.mutate({ task: selectedDaily, orderId: e.target.value || null })
-                      }
-                    >
-                      <option value="">— 연결 안 함 (Daily Project) —</option>
-                      {(ordersData.data ?? [])
-                        .filter((o) => o.status !== "COMPLETED" || o.id === selectedDaily.order_id)
-                        .sort((a, b) => a.order_number.localeCompare(b.order_number))
-                        .map((o) => (
-                          <option key={o.id} value={o.id}>
-                            {o.order_number} ·{" "}
-                            {o.products?.name ?? o.customers?.name ?? o.recipient ?? ""}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
-                  <label className="block space-y-1">
-                    <span className="label-caps block text-[11px] text-muted-foreground">
-                      NOTE (플래너 TASK 노트)
-                    </span>
-                    <textarea
-                      className={cn(inputClass, "min-h-[36px] w-full")}
-                      defaultValue={selectedDaily.note ?? ""}
-                      onBlur={(e) => {
-                        const v = e.target.value.trim();
-                        if (v !== (selectedDaily.note ?? ""))
-                          updateDaily.mutate({ task: selectedDaily, note: v || null });
-                      }}
-                    />
-                  </label>
-                </div>
-              ) : selected && selectedRow ? (
-                <div
-                  key={`${selected.id}-${selected.updated_at}`}
-                  className="space-y-2 border border-border bg-card p-3"
-                >
-                  <p className="text-sm">
-                    <span className="label-caps mr-2 text-[11px] text-muted-foreground">
-                      {selectedRow.order.order_number} · {selectedRow.slot ?? "CORE"}
-                    </span>
-                    {blockTitle(selected, selectedRow)}
-                  </p>
-                  <div className="flex flex-wrap items-end gap-2">
-                    <label className="space-y-1">
-                      <span className="label-caps block text-[11px] text-muted-foreground">
-                        DATE
-                      </span>
-                      <input
-                        type="date"
-                        className={cn(inputClass, "!w-40")}
-                        defaultValue={selected.block_date}
-                        onBlur={(e) => {
-                          if (e.target.value && e.target.value !== selected.block_date) {
-                            updateBlock.mutate({ block: selected, day: e.target.value });
-                          }
-                        }}
-                      />
-                    </label>
-                    <label className="space-y-1">
-                      <span className="label-caps block text-[11px] text-muted-foreground">
-                        START
-                      </span>
-                      <input
-                        type="time"
-                        step={300}
-                        className={cn(inputClass, "!w-36 min-w-[9rem]")}
-                        defaultValue={selected.start_time.slice(0, 5)}
-                        onBlur={(e) => {
-                          const v = e.target.value;
-                          if (!v) return;
-                          const m = toMin(v);
-                          const end = toMin(selected.end_time);
-                          if (m !== toMin(selected.start_time) && m < end) {
-                            updateBlock.mutate({ block: selected, startMin: m });
-                          }
-                        }}
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      title="현재 시각 적용"
-                      className={cn(buttonClass, "!min-h-[36px] px-2 text-[11px]")}
-                      disabled={busy}
-                      onClick={() => {
-                        const m = nowMin();
-                        const dur = toMin(selected.end_time) - toMin(selected.start_time);
-                        // "지금"은 시각뿐 아니라 날짜도 오늘로 옮긴다. 날짜가 달라지면 길이를 유지해 종료도 따라간다.
-                        if (m < toMin(selected.end_time) && selected.block_date === todayStr)
-                          updateBlock.mutate({ block: selected, startMin: m });
-                        else
-                          updateBlock.mutate({
-                            block: selected,
-                            day: todayStr,
-                            startMin: m,
-                            endMin: m + dur,
-                          });
-                      }}
-                    >
-                      지금
-                    </button>
-                    <label className="space-y-1">
-                      <span className="label-caps block text-[11px] text-muted-foreground">
-                        END
-                      </span>
-                      <input
-                        type="time"
-                        step={300}
-                        className={cn(inputClass, "!w-36 min-w-[9rem]")}
-                        defaultValue={selected.end_time.slice(0, 5)}
-                        onBlur={(e) => {
-                          const v = e.target.value;
-                          if (!v) return;
-                          const m = toMin(v);
-                          if (m !== toMin(selected.end_time) && m > toMin(selected.start_time)) {
-                            updateBlock.mutate({ block: selected, endMin: m });
-                          }
-                        }}
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      title="현재 시각 적용"
-                      className={cn(buttonClass, "!min-h-[36px] px-2 text-[11px]")}
-                      disabled={busy}
-                      onClick={() => {
-                        const m = nowMin();
-                        if (m > toMin(selected.start_time))
-                          updateBlock.mutate({ block: selected, day: todayStr, endMin: m });
-                        else setWarning("지금 시각이 시작 시각보다 빨라서 END에 적용할 수 없어요.");
-                      }}
-                    >
-                      지금
-                    </button>
-                    {selected.step_name ? (
-                      <span className="font-mono text-[11px] text-muted-foreground">
-                        템플릿 단계 {selected.part_no}: {selected.step_name}
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        className={buttonClass}
-                        disabled={busy}
-                        onClick={() => splitBlock.mutate(selected)}
-                        title="같은 컴포넌트의 다음 차수 블록을 만들어요"
-                      >
-                        SPLIT (1차/2차)
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className={cn(buttonClass, "hover:text-destructive")}
-                      disabled={busy}
-                      onClick={() => {
-                        if (
-                          confirm(
-                            selected.step_name
-                              ? "배정을 해제할까요? 이 컴포넌트의 모든 단계 블록과 플래너 TASK가 삭제되고 대기공간으로 돌아갑니다."
-                              : "배정을 해제할까요? 이 블록과 플래너에 만들어진 TASK가 삭제되고 컴포넌트는 대기공간으로 돌아갑니다.",
-                          )
-                        ) {
-                          removeBlock.mutate(selected);
-                        }
-                      }}
-                    >
-                      UNASSIGN
-                    </button>
-                    <Link
-                      to="/production/$sessionId"
-                      params={{ sessionId: selectedRow.work_session_id }}
-                      className={buttonClass}
-                    >
-                      OPEN SESSION
-                    </Link>
-                  </div>
-                </div>
-              ) : (
-                <p className="font-mono text-[11px] text-muted-foreground">
-                  블록을 누르면 시간 수정·분할·배정 해제를 할 수 있어요. 아래쪽 가장자리를 끌면
-                  길이가 바뀌어요.
-                </p>
-              )}
-              {detailRowId && rowById.get(detailRowId) && (
-                <SessionExperimentButton row={rowById.get(detailRowId)!} />
-              )}
-            </aside>
-          </div>
-        </div>
-      </details>
 
       {/* ── 세션 메모 ── */}
       {workspaceSessions.length > 0 ? (
@@ -2511,6 +1664,82 @@ function ProductionBlockRecord({
           embedded
         />
       )}
+    </div>
+  );
+}
+
+/** A daily task (not tied to an order) shown between production records. */
+function DailyRecordRow({
+  task,
+  placement,
+  workItems,
+  busy,
+  onPlace,
+  onTime,
+  onDelete,
+}: {
+  task: DailyTask;
+  placement: string;
+  workItems: { id: string; label: string }[];
+  busy: boolean;
+  onPlace: (value: string) => void;
+  onTime: (startMin: number, endMin: number) => void;
+  onDelete: () => void;
+}) {
+  const start = toMin(task.start_time);
+  const duration = Math.max(SNAP_MIN, toMin(task.end_time) - start);
+  return (
+    <div
+      className="my-1 space-y-1 border border-border bg-background p-1.5 text-xs"
+      style={{ borderLeft: `3px solid ${DAILY_COLOR.accent}` }}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="min-w-0 font-medium [overflow-wrap:anywhere]">
+          <span className="label-caps mr-1 text-[9px] text-muted-foreground">DAILY</span>
+          {task.name}
+        </span>
+        <button
+          type="button"
+          aria-label={`${task.name} 삭제`}
+          className="px-1 text-muted-foreground hover:text-foreground"
+          disabled={busy}
+          onClick={onDelete}
+        >
+          ✕
+        </button>
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <input
+          type="time"
+          aria-label={`${task.name} 시작`}
+          className={cn(inputClass, "!w-24")}
+          defaultValue={task.start_time.slice(0, 5)}
+          key={task.start_time}
+          disabled={busy}
+          onBlur={(e) => {
+            if (!e.target.value) return;
+            const next = clamp(toMin(e.target.value), DAY_START_MIN, DAY_END_MIN - duration);
+            if (next !== start) onTime(next, next + duration);
+          }}
+        />
+        <span className="font-mono text-[11px] text-muted-foreground">
+          –{toTime(start + duration).slice(0, 5)} · {duration}분
+        </span>
+        <select
+          aria-label={`${task.name} 순서`}
+          className="min-w-0 flex-1 border border-border bg-background p-0.5 text-[11px]"
+          value={placement}
+          onChange={(e) => onPlace(e.target.value)}
+        >
+          <option value="time">시간 순</option>
+          {workItems.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.label} 앞
+            </option>
+          ))}
+          <option value="end">맨 끝</option>
+        </select>
+      </div>
     </div>
   );
 }
