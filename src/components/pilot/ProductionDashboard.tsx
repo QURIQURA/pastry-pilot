@@ -1192,9 +1192,7 @@ export function ProductionDashboard() {
                   items={activeItems}
                   mergedVersions={mergedVersions}
                   onToggleMerge={toggleMerge}
-                  labels={Object.fromEntries(
-                    rows.map((row) => [row.id, `${row.order.order_number} · ${row.slot ?? ""}`]),
-                  )}
+                  labels={Object.fromEntries(rows.map((row) => [row.id, row.order.order_number]))}
                   onSelectColumn={focusRecord}
                   onColumnOrder={(ids) => {
                     const current = activeItems.map((item) => item.rowId);

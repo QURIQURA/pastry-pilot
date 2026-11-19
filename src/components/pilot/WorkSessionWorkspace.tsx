@@ -1317,9 +1317,6 @@ function WeighingView({
                         ? () => onSelectColumn(col.groupKey ?? col.selectionId)
                         : undefined
                     }
-                    onEditPlan={
-                      onEditPlan && !col.groupKey ? () => onEditPlan(col.selectionId) : undefined
-                    }
                     mergeAction={
                       onToggleMerge && col.mergeCount && col.mergeCount > 1
                         ? {
@@ -1329,12 +1326,6 @@ function WeighingView({
                           }
                         : undefined
                     }
-                    mouldLabel={
-                      col.mouldId && mouldById.get(col.mouldId)
-                        ? mouldAbbr(mouldById.get(col.mouldId)!)
-                        : undefined
-                    }
-                    mouldCount={col.mouldQty}
                     sourceLabel={col.members
                       ?.map((member) => member.label)
                       .filter(Boolean)
@@ -1358,6 +1349,85 @@ function WeighingView({
                 key={MATRIX_FILLER_COL_ID}
                 className="sticky top-0 z-20 bg-secondary shadow-[inset_0_-1px_0_0_var(--color-border),inset_1px_0_0_0_var(--color-border)]"
               />
+            </tr>
+            {(onEditPlan || displayColumns.some((column) => column.mouldId)) && (
+              <tr>
+                <th className="label-caps sticky left-0 z-10 border border-border bg-secondary px-3 py-1 text-right text-[11px]">
+                  몰드 · 개수
+                </th>
+                {displayColumns.map((column) => {
+                  const mould = column.mouldId ? mouldById.get(column.mouldId) : undefined;
+                  return (
+                    <td
+                      key={column.selectionId}
+                      className="border border-border bg-secondary px-2 py-1 text-xs"
+                    >
+                      {onEditPlan && !column.groupKey ? (
+                        <button
+                          type="button"
+                          className="text-left underline-offset-2 hover:underline"
+                          onClick={() => onEditPlan(column.selectionId)}
+                          title="생산 계획 편집"
+                        >
+                          {mould
+                            ? `${mouldAbbr(mould)}${column.mouldQty == null ? "" : ` · ${column.mouldQty}개`}`
+                            : "생산 수량 편집"}
+                        </button>
+                      ) : mould ? (
+                        `${mouldAbbr(mould)}${column.mouldQty == null ? "" : ` · ${column.mouldQty}개`}`
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                  );
+                })}
+                <td className="border border-border bg-secondary" />
+              </tr>
+            )}
+            {(onEditPlan || displayColumns.some((c) => c.mouldId)) && (
+              <tr>
+                <th className="label-caps sticky left-0 z-10 border-t border-r border-border bg-secondary px-3 py-1 text-right text-[11px] text-muted-foreground">
+                  몰드별 배분
+                </th>
+                {displayColumns.map((col) => {
+                  // 2026-11-13: 팝업 세션은 slot이 null이라 SHEET 한정이면 몰드 행이 사라졌다 — 몰드가 있으면 슬롯과 무관하게 표시.
+                  const m = col.mouldId ? mouldById.get(col.mouldId) : null;
+                  const baseM = col.baseMouldId ? mouldById.get(col.baseMouldId) : null;
+                  const qty =
+                    col.mouldQty ?? (m && baseM ? mouldQty(col.multiplier, baseM, m) : null);
+                  // Use actual batter total, not the nominal mould capacity.
+                  const actualTotal = totalsByColumn[col.selectionId] ?? 0;
+                  const split =
+                    qty == null
+                      ? []
+                      : col.batterSplit && matchesMouldSplit(col.batterSplit, qty, actualTotal)
+                        ? col.batterSplit
+                        : equalMouldSplit(actualTotal, qty);
+                  return (
+                    <td
+                      key={col.selectionId}
+                      className="border-t border-l border-border bg-secondary px-2 py-1 text-left font-mono text-[11px] tabular-nums text-muted-foreground"
+                    >
+                      {split.length > 1 ? split.map((grams) => `${grams}g`).join(" + ") : "—"}
+                    </td>
+                  );
+                })}
+                <td className="border-t border-l border-border bg-secondary" />
+              </tr>
+            )}
+            <tr>
+              <th className="label-caps sticky left-0 z-10 border-t border-r border-border bg-secondary px-3 py-2 text-right text-xs text-muted-foreground">
+                전체 중량
+              </th>
+              {displayColumns.map((col) => (
+                <td
+                  key={col.selectionId}
+                  className="border-t border-l border-border bg-secondary px-2 py-2 text-left text-sm font-semibold tabular-nums"
+                >
+                  {fmtNumber(totalsByColumn[col.selectionId] ?? 0, 0)}g
+                </td>
+              ))}
+              <td className="border-t border-l border-border bg-secondary" />
             </tr>
           </thead>
         </DndContext>
@@ -1383,74 +1453,6 @@ function WeighingView({
             </tbody>
           </SortableContext>
         </DndContext>
-        <tfoot>
-          {displayColumns.some((column) => column.mouldId) && (
-            <tr>
-              <th className="label-caps sticky left-0 z-10 border border-border bg-secondary px-3 py-1 text-right text-[11px]">
-                몰드 · 개수
-              </th>
-              {displayColumns.map((column) => {
-                const mould = column.mouldId ? mouldById.get(column.mouldId) : undefined;
-                return (
-                  <td
-                    key={column.selectionId}
-                    className="border border-border bg-secondary px-2 py-1 text-xs"
-                  >
-                    {mould
-                      ? `${mouldAbbr(mould)}${column.mouldQty == null ? "" : ` · ${column.mouldQty}개`}`
-                      : "—"}
-                  </td>
-                );
-              })}
-              <td className="border border-border bg-secondary" />
-            </tr>
-          )}
-          {displayColumns.some((c) => c.mouldId) && (
-            <tr>
-              <th className="label-caps sticky left-0 z-10 border-t border-r border-border bg-secondary px-3 py-1 text-right text-[11px] text-muted-foreground">
-                몰드별 배분
-              </th>
-              {displayColumns.map((col) => {
-                // 2026-11-13: 팝업 세션은 slot이 null이라 SHEET 한정이면 몰드 행이 사라졌다 — 몰드가 있으면 슬롯과 무관하게 표시.
-                const m = col.mouldId ? mouldById.get(col.mouldId) : null;
-                const baseM = col.baseMouldId ? mouldById.get(col.baseMouldId) : null;
-                const qty =
-                  col.mouldQty ?? (m && baseM ? mouldQty(col.multiplier, baseM, m) : null);
-                // Use actual batter total, not the nominal mould capacity.
-                const actualTotal = totalsByColumn[col.selectionId] ?? 0;
-                const split =
-                  qty == null
-                    ? []
-                    : col.batterSplit && matchesMouldSplit(col.batterSplit, qty, actualTotal)
-                      ? col.batterSplit
-                      : equalMouldSplit(actualTotal, qty);
-                return (
-                  <td
-                    key={col.selectionId}
-                    className="border-t border-l border-border bg-secondary px-2 py-1 text-left font-mono text-[11px] tabular-nums text-muted-foreground"
-                  >
-                    {split.length > 1 ? split.map((grams) => `${grams}g`).join(" + ") : "—"}
-                  </td>
-                );
-              })}
-              <td className="border-t border-l border-border bg-secondary" />
-            </tr>
-          )}
-          <tr>
-            <th className="label-caps sticky left-0 bottom-0 z-10 border-t border-r border-border bg-secondary px-3 py-2 text-right text-xs text-muted-foreground">
-              전체 중량
-            </th>
-            {displayColumns.map((col) => (
-              <td
-                key={col.selectionId}
-                className="border-t border-l border-border bg-secondary px-2 py-2 text-left text-sm font-semibold tabular-nums"
-              >
-                {fmtNumber(totalsByColumn[col.selectionId] ?? 0, 0)}g
-              </td>
-            ))}
-            <td className="border-t border-l border-border bg-secondary" />
-          </tr>
-        </tfoot>
       </table>
     </div>
   );
@@ -1506,9 +1508,6 @@ function MatrixColumnHeader({
   onResizeStart,
   onEdit,
   onSelect,
-  onEditPlan,
-  mouldLabel,
-  mouldCount,
   sourceLabel,
   mergeAction,
 }: {
@@ -1524,9 +1523,6 @@ function MatrixColumnHeader({
   onResizeStart: (clientX: number) => void;
   onEdit: (() => void) | undefined;
   onSelect?: (() => void) | undefined;
-  onEditPlan?: (() => void) | undefined;
-  mouldLabel?: string | undefined;
-  mouldCount?: number | null | undefined;
   sourceLabel?: string | undefined;
   mergeAction?: { count: number; merged: boolean; toggle: () => void } | undefined;
 }) {
@@ -1608,27 +1604,6 @@ function MatrixColumnHeader({
           <p className="truncate text-[10px] text-muted-foreground" title={sourceLabel}>
             {sourceLabel}
           </p>
-        )}
-        {onEditPlan ? (
-          <button
-            type="button"
-            className="text-left text-[11px] underline-offset-2 hover:underline"
-            onClick={onEditPlan}
-            title="생산 계획 편집"
-          >
-            {mouldLabel
-              ? [mouldLabel, mouldCount != null ? `${mouldCount}개` : null]
-                  .filter(Boolean)
-                  .join(" · ")
-              : "생산 수량 편집"}
-          </button>
-        ) : (
-          mouldLabel && (
-            <p className="text-[11px] text-muted-foreground">
-              {mouldLabel}
-              {mouldCount != null ? ` · ${mouldCount}개` : ""}
-            </p>
-          )
         )}
       </div>
       {mergeAction && (
