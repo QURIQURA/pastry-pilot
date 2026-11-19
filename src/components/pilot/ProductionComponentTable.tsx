@@ -321,8 +321,7 @@ function ComponentRow({
               >
                 ⇄ {mergedWith.length > 0 ? "병합 대상 추가" : "같은 포뮬라 병합"} ({mergeCandidates.length})
               </button>
-            )
-          )}
+            )}
         </td>
         <td>
           {canEditMould ? (
