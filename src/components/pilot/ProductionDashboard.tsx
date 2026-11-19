@@ -184,6 +184,7 @@ export function ProductionDashboard() {
     }
   });
   const [workTab, setWorkTab] = useState(0);
+  const [workMenuId, setWorkMenuId] = useState<string | null>(null);
   const [recordRowId, setRecordRowId] = useState<string | null>(null);
   const [clock, setClock] = useState(() => new Date());
   useEffect(() => {
@@ -385,13 +386,6 @@ export function ProductionDashboard() {
   ]);
   const activeItems = tabItems[activeTab] ?? [];
   const updateTabs = (next: string[][]) => setWorkTabs((prev) => ({ ...prev, [date]: next }));
-  const moveToTab = (rowId: string, target: number) =>
-    updateTabs(
-      tabItems.map((items, index) => [
-        ...items.filter((item) => item.rowId !== rowId).map((item) => item.rowId),
-        ...(index === target ? [rowId] : []),
-      ]),
-    );
   const taskQueries = useQueries({
     queries: workspaceSessions.map(({ sid }) => workSessionTasksQuery(sid)),
   });
@@ -455,14 +449,28 @@ export function ProductionDashboard() {
       },
     ];
   });
-  const seenWork = new Set<string>();
-  const workOrder = tabItems.flat().filter((item) => {
-    const row = rowById.get(item.rowId);
-    const key = row ? groupKeyForRow(row) : item.rowId;
-    if (seenWork.has(key)) return false;
-    seenWork.add(key);
-    return true;
+  const workGroups = tabItems.map((items) => {
+    const groups = new Map<string, string[]>();
+    for (const { rowId } of items) {
+      const row = rowById.get(rowId);
+      const key = row ? groupKeyForRow(row) : rowId;
+      const members = groups.get(key) ?? [];
+      members.push(rowId);
+      groups.set(key, members);
+    }
+    return [...groups.values()];
   });
+  const moveWork = (rowId: string, target: number, position?: number) => {
+    const source = tabByRow.get(rowId);
+    const group =
+      source == null ? undefined : workGroups[source]?.find((items) => items.includes(rowId));
+    if (!group || !workGroups[target]) return;
+    const reordered = workGroups.map((groups) => groups.filter((items) => items !== group));
+    const destination = reordered[target]!;
+    destination.splice(position ?? destination.length, 0, group);
+    updateTabs(reordered.map((groups) => groups.flat()));
+    setWorkTab(target);
+  };
   const hasRunningRecord = productionRecords.some(
     (record) => record.start && !record.end && !record.done,
   );
@@ -1122,16 +1130,74 @@ export function ProductionDashboard() {
                 </button>
               ))}
             <div className="mt-2 flex flex-wrap gap-1">
-              {workOrder.map((item, index) => (
-                <button
-                  type="button"
-                  key={item.rowId}
-                  className={buttonClass}
-                  onClick={() => focusRecord(item.rowId)}
-                >
-                  {index + 1} · {rowById.get(item.rowId)?.componentName}
-                </button>
-              ))}
+              {workGroups.flat().map((members, index) => {
+                const rowId = members[0]!;
+                const row = rowById.get(rowId);
+                const tab = tabByRow.get(rowId) ?? 0;
+                const groups = workGroups[tab]!;
+                const codes = [
+                  ...new Set(
+                    members.map((id) => rowById.get(id)?.order.order_number).filter(Boolean),
+                  ),
+                ].join(" + ");
+                const open = workMenuId === rowId;
+                return (
+                  <div key={rowId} className="relative">
+                    <button
+                      type="button"
+                      className={cn(buttonClass, open && "bg-secondary")}
+                      aria-expanded={open}
+                      onClick={() => {
+                        setWorkMenuId(open ? null : rowId);
+                        focusRecord(rowId);
+                      }}
+                    >
+                      {index + 1} · {row?.componentName}{" "}
+                      <span className="text-muted-foreground">{codes}</span> ▾
+                    </button>
+                    {open && (
+                      <div
+                        className="absolute left-0 z-30 mt-1 w-44 space-y-2 border border-border bg-card p-2 shadow-md"
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") setWorkMenuId(null);
+                        }}
+                      >
+                        <label className="block space-y-1 text-xs">
+                          작업 탭
+                          <select
+                            className="block w-full border border-border bg-background p-1"
+                            value={tab}
+                            onChange={(event) => moveWork(rowId, Number(event.target.value))}
+                          >
+                            {workGroups.map((_, target) => (
+                              <option key={target} value={target}>
+                                {target + 1}차 작업
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="block space-y-1 text-xs">
+                          탭 안 작업 순서
+                          <select
+                            className="block w-full border border-border bg-background p-1"
+                            value={groups.indexOf(members)}
+                            onChange={(event) => {
+                              moveWork(rowId, tab, Number(event.target.value));
+                              setWorkMenuId(null);
+                            }}
+                          >
+                            {groups.map((_, position) => (
+                              <option key={position} value={position}>
+                                {position + 1}번째
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
@@ -1162,29 +1228,6 @@ export function ProductionDashboard() {
                   ＋
                 </button>
               </div>
-              <details className="border border-border p-2">
-                <summary className="cursor-pointer text-xs">컴포넌트 작업 탭 배정</summary>
-                <div className="mt-2 grid gap-1 sm:grid-cols-2">
-                  {dayWorkItems.map(({ rowId }) => (
-                    <label key={rowId} className="flex items-center justify-between gap-2 text-xs">
-                      {rowById.get(rowId)?.order.order_number} · {rowById.get(rowId)?.componentName}
-                      <select
-                        className="border border-border bg-background p-1"
-                        value={tabItems.findIndex((items) =>
-                          items.some((item) => item.rowId === rowId),
-                        )}
-                        onChange={(event) => moveToTab(rowId, Number(event.target.value))}
-                      >
-                        {tabItems.map((_, index) => (
-                          <option key={index} value={index}>
-                            {index + 1}차 작업
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  ))}
-                </div>
-              </details>
               {activeItems.length ? (
                 <DayWorkView
                   part="WORK_VIEW"
