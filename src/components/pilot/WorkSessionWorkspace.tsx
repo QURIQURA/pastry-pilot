@@ -29,6 +29,7 @@ import {
   formulasQuery,
   formulaExperimentsQuery,
   mouldsQuery,
+  baseWeightsQuery,
   productsQuery,
   cakeSizesQuery,
   techniqueCategoriesQuery,
@@ -53,7 +54,7 @@ import {
   rescaleProductionSelections,
 } from "@/lib/production-quantity";
 import { resolveSlotGroup } from "@/lib/technique";
-import { mouldAbbr, mouldQty } from "@/lib/component-size";
+import { mouldAbbr, mouldQty, mouldMultiplier } from "@/lib/component-size";
 import { AdjustInput, ScaleAllPanel } from "@/components/pilot/RecipeScaleControls";
 import { round2, type ScaleMode } from "@/lib/recipe-scale";
 import { ExperimentCard } from "@/components/pilot/FormulaExperimentsTab";
@@ -633,9 +634,16 @@ export function AddFormulaVersionForm({
     return resolveSlotGroup(techniqueCategories.data ?? [], catId) === slot;
   });
   const [formulaId, setFormulaId] = useState("");
-  // 추가는 ×1로 하고, 배수·몰드·재료 기준 설정은 추가 직후 열리는 수정 창에서 한다.
-  const planMultiplier = "1";
-  const planTarget = "";
+  // Select the production quantity before ADD; the selection is saved once.
+  const [planMode, setPlanMode] = useState<"MULT" | "MOULD" | "BASE" | "ING">("MULT");
+  const [planMultiplier, setPlanMultiplier] = useState("1");
+  const [planMouldId, setPlanMouldId] = useState("");
+  const [planMouldQty, setPlanMouldQty] = useState("1");
+  const [planBaseId, setPlanBaseId] = useState("");
+  const [planBaseQty, setPlanBaseQty] = useState("1");
+  const [planIngredientId, setPlanIngredientId] = useState("");
+  const [planIngredientG, setPlanIngredientG] = useState("");
+  const baseWeights = useQuery(baseWeightsQuery());
   const formula = formulaList.find((f) => f.id === formulaId) ?? null;
   const versionOptions = [...(formula?.formula_versions ?? [])].sort(
     (a, b) => b.version_number - a.version_number,
@@ -658,12 +666,36 @@ export function AddFormulaVersionForm({
     (slot === "SHEET" || scalingMode === "MOULD") && selectedVersion?.default_mould_id
       ? ((allMoulds.data ?? []).find((m) => m.id === selectedVersion.default_mould_id) ?? null)
       : null;
-  const multiplierNum = Number(planMultiplier);
+  const ingredientOptions = (baseIngredients.data ?? [])
+    .map((line) => ({
+      id: line.ingredient_id,
+      name: line.ingredients?.name ?? "",
+      grams: toGrams(Number(line.amount), line.unit) ?? 0,
+    }))
+    .filter((line) => line.id && line.grams > 0);
+  const chosenMould = (allMoulds.data ?? []).find((m) => m.id === planMouldId);
+  const chosenBase = (baseWeights.data ?? []).find((b) => b.id === planBaseId);
+  const chosenIngredient = ingredientOptions.find((line) => line.id === planIngredientId);
+  const multiplierNum =
+    planMode === "MOULD"
+      ? mouldMultiplier(Number(planMouldQty), baseMould, chosenMould)
+      : planMode === "BASE"
+        ? baseTotal > 0 && chosenBase?.weight_g
+          ? (Number(chosenBase.weight_g) * Number(planBaseQty)) / baseTotal
+          : NaN
+        : planMode === "ING"
+          ? chosenIngredient?.grams
+            ? Number(planIngredientG) / chosenIngredient.grams
+            : NaN
+          : Number(planMultiplier);
 
   const add = useMutation({
     mutationFn: async () => {
       if (!versionId) throw new Error("Select a formula version");
-      const plan = parseComponentPlan(planMultiplier, planTarget);
+      if (!Number.isFinite(multiplierNum) || multiplierNum <= 0) {
+        throw new Error("생산 수량을 올바르게 입력해 주세요.");
+      }
+      const plan = parseComponentPlan(String(multiplierNum), "");
       // 2026-10-07 사용자 요청: 같은 FORMULA VERSION도 이 WORK SESSION에 중복으로 추가할 수
       // 있다(예: 같은 레시피를 다른 몰드/배치로 각각) — 더 이상 막지 않는다.
       const user_id = await currentUserId();
@@ -677,10 +709,14 @@ export function AddFormulaVersionForm({
           multiplier: plan.multiplier,
           target_quantity_g: plan.target_quantity_g,
           version_pinned: true,
-          mould_id: scalingMode === "MOULD" ? (selectedVersion?.default_mould_id ?? null) : null,
-          mould_qty: null,
-          capacity_id: scalingMode === "MOULD" ? (selectedVersion?.default_mould_id ?? null) : null,
-          capacity_qty: null,
+          mould_id: planMode === "MOULD" ? planMouldId : null,
+          mould_qty: planMode === "MOULD" ? Number(planMouldQty) : null,
+          capacity_id: planMode === "MOULD" ? planMouldId : null,
+          capacity_qty: planMode === "MOULD" ? Number(planMouldQty) : null,
+          base_weight_id: planMode === "BASE" ? planBaseId : null,
+          base_weight_qty: planMode === "BASE" ? Number(planBaseQty) : null,
+          plan_ingredient_id: planMode === "ING" ? planIngredientId : null,
+          plan_ingredient_g: planMode === "ING" ? Number(planIngredientG) : null,
           sort_order: nextSort,
           slot,
         })
@@ -707,8 +743,7 @@ export function AddFormulaVersionForm({
       return created.id;
     },
     onSuccess: async (createdId) => {
-      // 추가 직후 그 컴포넌트의 "입력 방식" 설정이 바로 열리게 한다(몰드/기본중량/배수/재료 기준).
-      openEditorOnMount.add(createdId);
+      // Quantity and input mode are already persisted; no second edit step.
       onDone(createdId);
       // 2026-10-21: CORE(SHEET/CREAM/FILLING)를 새로 추가하면 Planner에도 TASK가 생겨야 한다 —
       // 예전에는 일정을 저장할 때만 동기화돼서, 일정을 먼저 잡고 나중에 추가한 CREAM 등은 누락됐다.
@@ -741,6 +776,32 @@ export function AddFormulaVersionForm({
           </select>
         </Field>
       </div>
+      {versionId && (
+        <div className="space-y-2 border border-border p-3">
+          <Field label="입력 방식">
+            <select className={selectClass} value={planMode} onChange={(e) => setPlanMode(e.target.value as typeof planMode)}>
+              <option value="MULT">배수</option>
+              <option value="MOULD" disabled={!baseMould?.reference_weight_g}>몰드 기준</option>
+              <option value="BASE">기본중량 기준</option>
+              <option value="ING">재료 기준</option>
+            </select>
+          </Field>
+          {planMode === "MULT" && <Field label="레시피 배수"><input className={inputClass} type="number" min="0.001" step="any" value={planMultiplier} onChange={(e) => setPlanMultiplier(e.target.value)} /></Field>}
+          {planMode === "MOULD" && <div className="flex flex-wrap gap-2">
+            <Field label="목표 몰드"><select className={selectClass} value={planMouldId} onChange={(e) => setPlanMouldId(e.target.value)}><option value="">몰드 선택…</option>{(allMoulds.data ?? []).filter((m) => m.reference_weight_g).map((m) => <option key={m.id} value={m.id}>{mouldAbbr(m)}</option>)}</select></Field>
+            <Field label="몰드 개수"><input className={inputClass} type="number" min="1" step="1" value={planMouldQty} onChange={(e) => setPlanMouldQty(e.target.value)} /></Field>
+          </div>}
+          {planMode === "BASE" && <div className="flex flex-wrap gap-2">
+            <Field label="기본중량"><select className={selectClass} value={planBaseId} onChange={(e) => setPlanBaseId(e.target.value)}><option value="">기본중량 선택…</option>{(baseWeights.data ?? []).map((b) => <option key={b.id} value={b.id}>{b.name} · {b.weight_g}g</option>)}</select></Field>
+            <Field label="개수"><input className={inputClass} type="number" min="1" step="1" value={planBaseQty} onChange={(e) => setPlanBaseQty(e.target.value)} /></Field>
+          </div>}
+          {planMode === "ING" && <div className="flex flex-wrap gap-2">
+            <Field label="기준 재료"><select className={selectClass} value={planIngredientId} onChange={(e) => setPlanIngredientId(e.target.value)}><option value="">재료 선택…</option>{ingredientOptions.map((line) => <option key={line.id} value={line.id}>{line.name} · {fmtNumber(line.grams, 1)}g</option>)}</select></Field>
+            <Field label="목표 재료량(g)"><input className={inputClass} type="number" min="0.01" step="any" value={planIngredientG} onChange={(e) => setPlanIngredientG(e.target.value)} /></Field>
+          </div>}
+          <p className="font-mono text-xs">생산 배수: {Number.isFinite(multiplierNum) && multiplierNum > 0 ? `×${fmtNumber(multiplierNum, 3)} · ${fmtNumber(baseTotal * multiplierNum, 0)}g` : "입력값을 선택해 주세요"}</p>
+        </div>
+      )}
       {versionId && (
         <div className="space-y-0.5 border border-border bg-muted/30 px-3 py-2 font-mono text-xs">
           {baseIngredients.isLoading ? (
@@ -776,8 +837,7 @@ export function AddFormulaVersionForm({
         </div>
       )}
       <p className="text-xs text-muted-foreground">
-        ADD를 누르면 ×1로 추가되고, 입력 방식(몰드·기본중량·배수·재료 기준) 설정이 바로 열려요. 이
-        주문의 계획으로 저장되며 다른 화면에도 같은 계획이 표시됩니다.
+        FORMULA를 선택한 뒤 생산 수량을 설정하고 ADD를 누르면 한 번에 저장됩니다.
       </p>
       {add.isError && (
         <p className="font-mono text-xs uppercase text-destructive">
@@ -785,7 +845,7 @@ export function AddFormulaVersionForm({
         </p>
       )}
       <div className="flex gap-2">
-        <button type="submit" className={primaryButtonClass} disabled={add.isPending}>
+        <button type="submit" className={primaryButtonClass} disabled={add.isPending || !versionId || !Number.isFinite(multiplierNum) || multiplierNum <= 0}>
           ADD
         </button>
         <button type="button" className={buttonClass} onClick={() => onDone()}>
