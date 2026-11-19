@@ -34,6 +34,30 @@ export function mouldMultiplier(qty: number, base: RefMould, target: RefMould): 
   return round4((qty * t) / b);
 }
 
+/** Match the actual recipe ingredient total to the selected mould's target grams.
+ * Keep full precision in storage; round only the displayed gram quantity.
+ * The mould's nominal base weight can differ from the recipe's real total. */
+export function mouldMultiplierForRecipe(
+  qty: number,
+  recipeBaseGrams: number,
+  target: RefMould,
+): number | null {
+  const targetGrams = ref(target);
+  if (!(qty > 0) || !(recipeBaseGrams > 0) || targetGrams == null) return null;
+  return (qty * targetGrams) / recipeBaseGrams;
+}
+
+/** Reverse the actual-recipe-weight calculation without rounding the mould count. */
+export function mouldQtyForRecipe(
+  multiplier: number,
+  recipeBaseGrams: number,
+  target: RefMould,
+): number | null {
+  const targetGrams = ref(target);
+  if (!(multiplier > 0) || !(recipeBaseGrams > 0) || targetGrams == null) return null;
+  return (multiplier * recipeBaseGrams) / targetGrams;
+}
+
 /** 저장된 레시피 배수에서 목표 몰드 개수를 거꾸로 계산한다(대시보드에서 배수를 바꿔도 표기가 맞도록). */
 export function mouldQty(multiplier: number, base: RefMould, target: RefMould): number | null {
   const b = ref(base);
