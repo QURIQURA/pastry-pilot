@@ -1,0 +1,45 @@
+# Checks that CLAUDE_CODE_OAUTH_TOKEN can sign in to Claude Code, and prints only the
+# token's shape and the result or error message, never the token. Auto-Pilot hides Claude's
+# output, so use this when Auto-Pilot fails at "Claude implements the issue" in under a second.
+name: Claude auth check
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    paths: [".github/workflows/claude-auth-check.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    if: ${{ !startsWith(github.head_ref, 'autopilot/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+    steps:
+      - name: Token shape (no value printed)
+        run: |
+          t="$CLAUDE_CODE_OAUTH_TOKEN"
+          echo "length=${#t}"
+          case "$t" in
+            sk-ant-oat01-*) echo "prefix=sk-ant-oat01- (OAuth token)" ;;
+            sk-ant-api*) echo "prefix=sk-ant-api (an API key, belongs in ANTHROPIC_API_KEY)" ;;
+            "") echo "prefix=missing" ;;
+            *) echo "prefix=unexpected" ;;
+          esac
+          if [[ "$t" =~ [[:space:]] ]]; then echo "contains whitespace=yes"; else echo "contains whitespace=no"; fi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Ask Claude Code for one word
+        run: |
+          npm install -g @anthropic-ai/claude-code >/dev/null 2>&1
+          claude --version
+          for m in default claude-sonnet-5-5 claude-haiku-5-5; do
+            if [ "$m" = default ]; then args=(); else args=(--model "$m"); fi
+            out=$(claude -p "Reply with the single word OK." "${args[@]}" --output-format json --max-turns 1 2>&1 || true)
+            line=$(printf '%s' "$out" | jq -r '"is_error=\(.is_error) result=\(.result)"' 2>/dev/null || printf '%s' "$out" | tail -3)
+            echo "model=$m: $line"
+          done
