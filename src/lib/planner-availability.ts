@@ -6,7 +6,7 @@
  * Nothing here blocks or changes scheduling.
  *
  * States (final policy approved by 연, 2026-11-15; Planner computes this, in priority order):
- *  1. busy:      a timed Planner schedule, whoever the carer is (no end time = 30 min)
+ *  1. busy:      Hyatt shift or a timed Planner schedule, whoever the carer is (no end time = 30 min)
  *  2. busy:      Tanji with Yeon, 24 h
  *  3. unknown:   Shared (carer not decided) / Unassigned, 24 h — not counted as available
  *  4. unknown:   no carer recorded, 24 h — not counted as available
@@ -21,7 +21,7 @@ export type AvailabilitySegment = {
   start: string; // "HH:MM" local Australia/Sydney wall-clock
   end: string; // "HH:MM", may be "24:00"
   state: AvailabilityState;
-  reason: "childcare" | "planner_task" | "outside_window";
+  reason: "childcare" | "planner_task" | "outside_window" | "hyatt";
   carer: string | null;
   label: string;
   override: boolean;
