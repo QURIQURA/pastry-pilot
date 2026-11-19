@@ -1,3 +1,4 @@
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { OrderComponentPlanRow } from "./OrderComponentPlanRow";
 import { MouldAllocation } from "@/components/pilot/MouldAllocation";
 import { ensureStandardProfile } from "@/lib/standard-profile";
@@ -56,6 +57,8 @@ import {
   roundIngredientGrams,
   equalMouldSplit,
   matchesMouldSplit,
+  mouldBatchGrams,
+  formatMouldSplit,
 } from "@/lib/production-quantity";
 import { resolveSlotGroup } from "@/lib/technique";
 import { mouldAbbr, mouldQty, mouldMultiplierForRecipe } from "@/lib/component-size";
@@ -1018,13 +1021,7 @@ function FormulaVersionRow({
   });
   return (
     <li className="space-y-2 px-3 py-2">
-      <ProductionQuantityRow
-        members={[{ ...row, sessionId }]}
-        lines={lines}
-        canMerge={false}
-        onToggleMerge={() => {}}
-        labels={{}}
-      />
+      <ProductionQuantityRow members={[{ ...row, sessionId }]} lines={lines} labels={{}} />
       <button type="button" className={buttonClass} onClick={() => setShowHistory((v) => !v)}>
         {showHistory ? "HIDE HISTORY" : "HISTORY"}
       </button>
@@ -1062,7 +1059,7 @@ type WeighingColumn = {
   slot?: string | null;
   mouldId?: string | null;
   mouldQty?: number | null;
-  mergeCount?: number;
+  allocations?: { mouldId: string; count: number; split: number[] }[];
   batterSplit?: number[] | null;
   /** 레시피 기본 몰드 — 몰드 개수가 비어 있을 때 배수에서 거꾸로 계산하는 데 사용 */
   baseMouldId?: string | null;
@@ -1095,7 +1092,7 @@ function WeighingView({
   onSelectColumn,
   onColumnOrder,
   onEditPlan,
-  onToggleMerge,
+  getBatchAction,
 }: {
   sessionId: string;
   groups: ReturnType<typeof buildWeighingGroups>;
@@ -1104,7 +1101,8 @@ function WeighingView({
   onEditColumn?: (column: WeighingColumn) => void;
   onSelectColumn?: ((id: string) => void) | undefined;
   onColumnOrder?: ((ids: string[]) => void) | undefined;
-  onToggleMerge?: ((versionId: string) => void) | undefined;
+  getBatchAction?:
+    ((id: string) => { merged: boolean; toggle: () => void } | undefined) | undefined;
   onEditPlan?: ((id: string) => void) | undefined;
 }) {
   const mouldsForTotal = useQuery(mouldsQuery());
@@ -1317,15 +1315,7 @@ function WeighingView({
                         ? () => onSelectColumn(col.groupKey ?? col.selectionId)
                         : undefined
                     }
-                    mergeAction={
-                      onToggleMerge && col.mergeCount && col.mergeCount > 1
-                        ? {
-                            count: col.mergeCount,
-                            merged: (col.members?.length ?? 0) > 1,
-                            toggle: () => onToggleMerge(col.formulaVersionId),
-                          }
-                        : undefined
-                    }
+                    mergeAction={getBatchAction?.(col.selectionId)}
                     sourceLabel={col.members
                       ?.map((member) => member.label)
                       .filter(Boolean)
@@ -1353,10 +1343,23 @@ function WeighingView({
             {(onEditPlan || displayColumns.some((column) => column.mouldId)) && (
               <tr>
                 <th className="label-caps sticky left-0 z-10 border border-border bg-secondary px-3 py-1 text-right text-[11px]">
-                  몰드 · 개수
+                  몰드
                 </th>
                 {displayColumns.map((column) => {
                   const mould = column.mouldId ? mouldById.get(column.mouldId) : undefined;
+                  const mouldText = column.allocations?.length
+                    ? column.allocations
+                        .map(({ mouldId, count }) => {
+                          const item = mouldById.get(mouldId);
+                          return item
+                            ? `${mouldAbbr(item)}${count > 0 ? ` · ${count}개` : ""}`
+                            : "";
+                        })
+                        .filter(Boolean)
+                        .join(" + ")
+                    : mould
+                      ? `${mouldAbbr(mould)}${column.mouldQty == null ? "" : ` · ${column.mouldQty}개`}`
+                      : "";
                   return (
                     <td
                       key={column.selectionId}
@@ -1369,14 +1372,10 @@ function WeighingView({
                           onClick={() => onEditPlan(column.selectionId)}
                           title="생산 계획 편집"
                         >
-                          {mould
-                            ? `${mouldAbbr(mould)}${column.mouldQty == null ? "" : ` · ${column.mouldQty}개`}`
-                            : "생산 수량 편집"}
+                          {mouldText || "생산 수량 편집"}
                         </button>
-                      ) : mould ? (
-                        `${mouldAbbr(mould)}${column.mouldQty == null ? "" : ` · ${column.mouldQty}개`}`
                       ) : (
-                        "—"
+                        mouldText || "—"
                       )}
                     </td>
                   );
@@ -1408,7 +1407,9 @@ function WeighingView({
                       key={col.selectionId}
                       className="border-t border-l border-border bg-secondary px-2 py-1 text-left font-mono text-[11px] tabular-nums text-muted-foreground"
                     >
-                      {split.length > 1 ? split.map((grams) => `${grams}g`).join(" + ") : "—"}
+                      {col.allocations?.some((entry) => entry.split.length)
+                        ? col.allocations.map((entry) => formatMouldSplit(entry.split)).join(" / ")
+                        : formatMouldSplit(split)}
                     </td>
                   );
                 })}
@@ -1524,7 +1525,7 @@ function MatrixColumnHeader({
   onEdit: (() => void) | undefined;
   onSelect?: (() => void) | undefined;
   sourceLabel?: string | undefined;
-  mergeAction?: { count: number; merged: boolean; toggle: () => void } | undefined;
+  mergeAction?: { merged: boolean; toggle: () => void } | undefined;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
@@ -1613,7 +1614,7 @@ function MatrixColumnHeader({
           aria-pressed={mergeAction.merged}
           onClick={mergeAction.toggle}
         >
-          {mergeAction.merged ? "병합 해제" : `같은 배합 ${mergeAction.count}건 병합`}
+          {mergeAction.merged ? "병합 해제" : "배치 병합…"}
         </button>
       )}
       {/* 열 너비 조절 손잡이 — 오른쪽 경계를 드래그 */}
@@ -3628,46 +3629,59 @@ function StockReflectSection({
  * 대시보드용 합쳐진 WORK VIEW(2026-10-22) — 그날 타임라인에 배정된 컴포넌트를 오더(세션)와 상관없이
  * 한 계량표에 나란히 보여준다(예전 WORK SESSION 화면처럼). items는 타임라인 시간순.
  */
-/**
- * 같은 레시피 버전 MERGE 보기 설정 — 대시보드 타임라인과 DayWorkView가 함께 쓴다(localStorage, 보기 설정).
- * rowIds가 바뀌면 그 조합의 저장값을 다시 읽는다.
- */
-export function useProductionMerge(rowIds: string[]) {
-  const [mergedVersions, setMergedVersions] = useState<Set<string>>(new Set());
-  const mergeStorageKey = `pilot:production-merge:${[...rowIds].sort().join(":")}`;
+/** Batch selections are a local view preference scoped to the production date. */
+export function useProductionMerge(date: string) {
+  const key = `pilot:production-batches:${date}`;
+  const [state, setState] = useState<{ key: string; members: Map<string, string> }>();
   useEffect(() => {
+    let entries: [string, string][] = [];
     try {
-      const stored: unknown = JSON.parse(localStorage.getItem(mergeStorageKey) ?? "[]");
-      setMergedVersions(
-        new Set(
-          Array.isArray(stored) ? stored.filter((s): s is string => typeof s === "string") : [],
-        ),
-      );
-    } catch {
-      setMergedVersions(new Set());
-    }
-  }, [mergeStorageKey]);
-  const toggleMerge = (versionId: string) =>
-    setMergedVersions((prev) => {
-      const next = new Set(prev);
-      if (next.has(versionId)) next.delete(versionId);
-      else next.add(versionId);
-      try {
-        localStorage.setItem(mergeStorageKey, JSON.stringify([...next]));
-      } catch {
-        /* optional view preference */
+      const stored: unknown = JSON.parse(localStorage.getItem(key) ?? "[]");
+      if (Array.isArray(stored)) {
+        entries = stored.filter(
+          (entry): entry is [string, string] =>
+            Array.isArray(entry) &&
+            entry.length === 2 &&
+            entry.every((value) => typeof value === "string"),
+        );
       }
-      return next;
-    });
-  return { mergedVersions, toggleMerge };
+    } catch {
+      // Local view state is optional.
+    }
+    setState({ key, members: new Map(entries) });
+  }, [key]);
+  const batchBySelection = useMemo(
+    () => (state?.key === key ? state.members : new Map<string, string>()),
+    [key, state],
+  );
+  const setBatch = (ids: string[]) => {
+    if (!ids.length) return;
+    const next = new Map(batchBySelection);
+    if (ids.length > 1) {
+      const batchId = crypto.randomUUID();
+      ids.forEach((id) => next.set(id, batchId));
+    } else {
+      const batchId = next.get(ids[0]!);
+      for (const [id, batch] of next) {
+        if (batch === batchId) next.delete(id);
+      }
+    }
+    setState({ key, members: next });
+    try {
+      localStorage.setItem(key, JSON.stringify([...next]));
+    } catch {
+      // Local view state is optional.
+    }
+  };
+  return { batchBySelection, setBatch };
 }
 
 export function DayWorkView({
   items,
   onSelectColumn,
   onColumnOrder,
-  mergedVersions,
-  onToggleMerge,
+  batchBySelection,
+  onSetBatch,
   labels = {},
   renderRecords,
   renderHeaderExtra,
@@ -3682,14 +3696,17 @@ export function DayWorkView({
   renderHeaderExtra?: (selectionIds: string[]) => React.ReactNode;
   focusedRowId?: string | null;
   focusKey?: string | null;
-  mergedVersions: Set<string>;
-  onToggleMerge: (versionId: string) => void;
+  batchBySelection: ReadonlyMap<string, string>;
+  onSetBatch: (ids: string[]) => void;
   items: { sessionId: string; rowId: string }[];
   labels?: Record<string, string>;
   onSelectColumn?: (id: string) => void;
   onColumnOrder?: (ids: string[]) => void;
 }) {
   const queryClient = useQueryClient();
+  const moulds = useQuery(mouldsQuery());
+  const [batchAnchor, setBatchAnchor] = useState<string | null>(null);
+  const [batchDraft, setBatchDraft] = useState<string[]>([]);
   const [planId, setPlanId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"WEIGHING" | "FORMULA">("WEIGHING");
   const [editingColumn, setEditingColumn] = useState<WeighingColumn | null>(null);
@@ -3763,15 +3780,61 @@ export function DayWorkView({
     () =>
       groupProductionSelections(
         ordered.map(({ row, sessionId }) => ({ ...row, sessionId })),
-        mergedVersions,
+        batchBySelection,
       ),
-    [ordered, mergedVersions],
+    [ordered, batchBySelection],
   );
+  const batchMoulds = useMemo(() => {
+    const byId = new Map((moulds.data ?? []).map((mould) => [mould.id, mould]));
+    return new Map(
+      ordered.map(({ row }) => {
+        const mould = row.mould_id ? byId.get(row.mould_id) : undefined;
+        const base = sumBaseGrams(ingredientsByVersion[row.formula_version_id] ?? []);
+        const count = Number(row.mould_qty);
+        const raw = base * Number(row.multiplier);
+        const grams = mouldBatchGrams(
+          raw,
+          mould ? count : 0,
+          mould?.reference_weight_g,
+          row.batter_split_g,
+        );
+        const split =
+          row.batter_split_g && matchesMouldSplit(row.batter_split_g, count, grams)
+            ? row.batter_split_g
+            : equalMouldSplit(grams, count);
+        return [
+          row.id,
+          {
+            mould,
+            count,
+            grams,
+            split,
+            multiplier: base > 0 ? grams / base : Number(row.multiplier),
+          },
+        ] as const;
+      }),
+    );
+  }, [ordered, ingredientsByVersion, moulds.data]);
+  const getBatchAction = (id: string) => {
+    const group = quantityGroups.find((entry) => entry.members.some((member) => member.id === id));
+    if (!group) return undefined;
+    if (group.members.length > 1) return { merged: true, toggle: () => onSetBatch([id]) };
+    const peers = quantityGroups.filter(
+      (entry) =>
+        entry.members.length === 1 &&
+        entry.members[0]!.formula_version_id === group.members[0]!.formula_version_id &&
+        !childrenByParent.get(entry.members[0]!.id)?.length,
+    );
+    if (peers.length < 2 || !peers.includes(group)) return undefined;
+    return {
+      merged: false,
+      toggle: () => {
+        setBatchAnchor(id);
+        setBatchDraft([]);
+      },
+    };
+  };
   const columns: WeighingColumn[] = useMemo(() => {
-    const mergeCounts = new Map<string, number>();
-    for (const { row } of ordered) {
-      mergeCounts.set(row.formula_version_id, (mergeCounts.get(row.formula_version_id) ?? 0) + 1);
-    }
     return quantityGroups.flatMap((group, idx): WeighingColumn[] => {
       const r = group.members[0]!;
       const kids = group.members.length === 1 ? (childrenByParent.get(r.id) ?? []) : [];
@@ -3800,6 +3863,18 @@ export function DayWorkView({
           ],
         }));
       }
+      const allocations = new Map<string, { mouldId: string; count: number; split: number[] }>();
+      const multiplier = group.members.reduce((total, member) => {
+        const plan = batchMoulds.get(member.id);
+        if (plan?.mould) {
+          const id = plan.mould.id;
+          const entry = allocations.get(id) ?? { mouldId: id, count: 0, split: [] };
+          entry.count += plan.count;
+          entry.split.push(...plan.split);
+          allocations.set(id, entry);
+        }
+        return total + (plan?.multiplier ?? Number(member.multiplier));
+      }, 0);
       return [
         {
           selectionId: r.id,
@@ -3807,12 +3882,12 @@ export function DayWorkView({
           formulaId: r.formula_versions.formulas.id,
           formulaName: `${r.formula_versions.formulas.components?.name ?? r.formula_versions.formulas.name}${group.members.length > 1 ? ` · MERGED ${group.members.length}` : ""}`,
           versionNumber: r.formula_versions.version_number,
-          multiplier: group.multiplier,
+          multiplier,
           sortOrder: idx,
           sessionId: r.sessionId,
           slot: r.slot ?? null,
           mouldId: r.mould_id ?? null,
-          mergeCount: mergeCounts.get(r.formula_version_id) ?? 1,
+          allocations: [...allocations.values()],
           batterSplit: group.members.length === 1 ? r.batter_split_g : null,
           baseMouldId: r.formula_versions.default_mould_id ?? null,
           mouldQty: group.members.every((m) => m.mould_id === r.mould_id && m.mould_qty != null)
@@ -3826,7 +3901,7 @@ export function DayWorkView({
         },
       ];
     });
-  }, [quantityGroups, ordered, childrenByParent, labels]);
+  }, [quantityGroups, batchMoulds, childrenByParent, labels]);
   const groups = useMemo(
     () =>
       buildWeighingGroups({
@@ -3898,12 +3973,7 @@ export function DayWorkView({
                     members={group.members}
                     labels={labels}
                     lines={ingredientsByVersion[group.members[0]!.formula_version_id] ?? []}
-                    canMerge={
-                      ordered.filter(
-                        (o) => o.row.formula_version_id === group.members[0]!.formula_version_id,
-                      ).length > 1
-                    }
-                    onToggleMerge={() => onToggleMerge(group.members[0]!.formula_version_id)}
+                    batchAction={getBatchAction(group.members[0]!.id)}
                   />
                 }
               />
@@ -3941,26 +4011,12 @@ export function DayWorkView({
                 entry.members.some((member) => member.id === planId),
               );
               const members = group?.members ?? [row];
-              const compatible = ordered.filter(
-                (item) => item.row.formula_version_id === row.formula_version_id,
-              );
               return (
                 <div className="mb-2 space-y-2 border border-border p-2">
                   <div className="flex gap-2">
                     <button type="button" className={buttonClass} onClick={() => setPlanId(null)}>
                       닫기
                     </button>
-                    {compatible.length > 1 && (
-                      <button
-                        type="button"
-                        className={buttonClass}
-                        onClick={() => onToggleMerge(row.formula_version_id)}
-                      >
-                        {mergedVersions.has(row.formula_version_id)
-                          ? "병합 해제"
-                          : "같은 배합 병합"}
-                      </button>
-                    )}
                   </div>
                   {members.map((member) => (
                     <div key={member.id}>
@@ -3969,10 +4025,7 @@ export function DayWorkView({
                       {Number(member.mould_qty) > 1 && (
                         <MouldAllocation
                           row={member}
-                          batchGrams={
-                            sumBaseGrams(ingredientsByVersion[member.formula_version_id] ?? []) *
-                            Number(member.multiplier)
-                          }
+                          batchGrams={batchMoulds.get(member.id)?.grams ?? 0}
                           label={labels[member.id] ?? ""}
                           mouldLabel="몰드"
                         />
@@ -3991,7 +4044,7 @@ export function DayWorkView({
               onEditColumn={setEditingColumn}
               onSelectColumn={onSelectColumn}
               onColumnOrder={onColumnOrder}
-              onToggleMerge={onToggleMerge}
+              getBatchAction={getBatchAction}
               onEditPlan={
                 onSelectColumn
                   ? (id) => setPlanId((previous) => (previous === id ? null : id))
@@ -4000,12 +4053,101 @@ export function DayWorkView({
             />
           ) : (
             <FormulaView
-              rows={quantityGroups.map((g) => ({ ...g.members[0]!, multiplier: g.multiplier }))}
+              rows={quantityGroups.map((g) => ({
+                ...g.members[0]!,
+                multiplier:
+                  columns.find((c) => c.selectionId === g.members[0]!.id)?.multiplier ??
+                  g.multiplier,
+              }))}
               ingredientsByVersion={ingredientsByVersion}
             />
           )}
         </SectionCard>
       )}
+      {batchAnchor &&
+        (() => {
+          const anchor = rowsById.get(batchAnchor)?.row;
+          if (!anchor) return null;
+          const candidates = quantityGroups.flatMap((group) => {
+            const member = group.members[0]!;
+            return group.members.length === 1 &&
+              member.id !== anchor.id &&
+              member.formula_version_id === anchor.formula_version_id &&
+              !childrenByParent.get(member.id)?.length
+              ? [member]
+              : [];
+          });
+          const anchorAction = getBatchAction(anchor.id);
+          const selected = candidates.filter((member) => batchDraft.includes(member.id));
+          const batchTotal = [anchor, ...selected].reduce(
+            (sum, member) => sum + (batchMoulds.get(member.id)?.grams ?? 0),
+            0,
+          );
+          return (
+            <Dialog
+              open
+              onOpenChange={(open) => {
+                if (!open) setBatchAnchor(null);
+              }}
+            >
+              <DialogContent
+                className="max-h-[85vh] max-w-md overflow-auto"
+                aria-describedby={undefined}
+              >
+                <DialogTitle className="label-caps">배치 병합</DialogTitle>
+                <p className="text-xs">{labels[anchor.id]} 기준 · 함께 계량할 항목을 선택하세요.</p>
+                {candidates.map((member) => {
+                  const plan = batchMoulds.get(member.id);
+                  return (
+                    <label
+                      key={member.id}
+                      className="flex gap-2 border-t border-border py-2 text-xs"
+                    >
+                      <input
+                        type="checkbox"
+                        autoFocus={member.id === candidates[0]?.id}
+                        checked={batchDraft.includes(member.id)}
+                        onChange={(event) => {
+                          const checked = event.target.checked;
+                          setBatchDraft((previous) =>
+                            checked
+                              ? [...previous, member.id]
+                              : previous.filter((id) => id !== member.id),
+                          );
+                        }}
+                      />
+                      <span>
+                        {labels[member.id]}
+                        {plan?.mould && ` · ${mouldAbbr(plan.mould)} · ${plan.count}개`} ·{" "}
+                        {fmtNumber(plan?.grams ?? 0, 0)}g
+                      </span>
+                    </label>
+                  );
+                })}
+                <div className="flex gap-2">
+                  <button
+                    className={primaryButtonClass}
+                    type="button"
+                    disabled={!selected.length || !anchorAction || anchorAction.merged}
+                    onClick={() => {
+                      onSetBatch([anchor.id, ...selected.map((member) => member.id)]);
+                      setBatchAnchor(null);
+                    }}
+                  >
+                    {selected.length + 1}건 병합
+                  </button>
+                  <button
+                    className={buttonClass}
+                    type="button"
+                    onClick={() => setBatchAnchor(null)}
+                  >
+                    취소
+                  </button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          );
+        })()}
       {part !== "COMPONENTS" &&
         rndColumns.map((col) => (
           <div key={col.selectionId} className="mt-4">
@@ -4159,8 +4301,7 @@ function SelectionQuantityHistory({
 function ProductionQuantityRow({
   members,
   lines,
-  canMerge,
-  onToggleMerge,
+  batchAction,
   labels,
   compact = false,
 }: {
@@ -4168,8 +4309,7 @@ function ProductionQuantityRow({
   labels: Record<string, string>;
   members: (WorkSessionFormulaVersionRow & { sessionId: string })[];
   lines: VersionIngredientRow[];
-  canMerge: boolean;
-  onToggleMerge: () => void;
+  batchAction?: { merged: boolean; toggle: () => void } | undefined;
 }) {
   const first = members[0]!;
   const total = members.reduce((sum, row) => sum + Number(row.multiplier), 0);
@@ -4177,10 +4317,16 @@ function ProductionQuantityRow({
   const moulds = useQuery(mouldsQuery());
   const mouldById = new Map((moulds.data ?? []).map((mould) => [mould.id, mould]));
   const mouldCount = members.reduce((sum, row) => sum + (Number(row.mould_qty) || 0), 0);
-  const allocatedTotal = members.reduce(
-    (sum, row) => sum + Math.round(base * Number(row.multiplier)),
-    0,
-  );
+  const batchGrams = (row: WorkSessionFormulaVersionRow) => {
+    const mould = row.mould_id ? mouldById.get(row.mould_id) : undefined;
+    return mouldBatchGrams(
+      base * Number(row.multiplier),
+      mould ? Number(row.mould_qty) : 0,
+      mould?.reference_weight_g,
+      row.batter_split_g,
+    );
+  };
+  const allocatedTotal = members.reduce((sum, row) => sum + Math.round(batchGrams(row)), 0);
   return (
     <div className="space-y-1 px-3 pb-3 pt-2 text-xs">
       {!compact && (
@@ -4209,7 +4355,7 @@ function ProductionQuantityRow({
             <MouldAllocation
               key={member.id}
               row={member}
-              batchGrams={base * Number(member.multiplier)}
+              batchGrams={batchGrams(member)}
               label={labels[member.id] ?? "WORK SESSION"}
               mouldLabel={mouldAbbr(mould)}
             />
@@ -4220,9 +4366,9 @@ function ProductionQuantityRow({
         <Link to="/production" search={{ tab: "ORDERS" }} className="underline">
           읽기 전용 · ORDERS에서 계획 수정 →
         </Link>
-        {canMerge && (
-          <button type="button" className="underline" onClick={onToggleMerge}>
-            {members.length > 1 ? "UNMERGE" : "MERGE SAME FORMULA"} (보기)
+        {batchAction && (
+          <button type="button" className="underline" onClick={batchAction.toggle}>
+            {batchAction.merged ? "병합 해제" : "배치 병합…"}
           </button>
         )}
       </div>

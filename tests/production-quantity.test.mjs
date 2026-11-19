@@ -1,8 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { loadTs } from "./load-ts.mjs";
-const { applySavedQuantities, equalMouldSplit, matchesMouldSplit, roundIngredientGrams, groupProductionSelections, rescaleProductionSelections } =
-  await loadTs("src/lib/production-quantity.ts");
+const {
+  applySavedQuantities,
+  mouldBatchGrams,
+  formatMouldSplit,
+  equalMouldSplit,
+  matchesMouldSplit,
+  roundIngredientGrams,
+  groupProductionSelections,
+  rescaleProductionSelections,
+} = await loadTs("src/lib/production-quantity.ts");
 test("MERGED ×4 publishes confirmed quantities to both rows and weighing data before refetch", () => {
   const cached = [
     { id: "a", formula_version_id: "v2", multiplier: 1, updated_at: "old-a", sessionId: "order-a" },
@@ -26,11 +34,27 @@ test("MERGED ×4 publishes confirmed quantities to both rows and weighing data b
     cached.map((r) => ({ id: r.id, multiplier: r.multiplier })),
     response,
   );
-  assert.equal(groupProductionSelections(selectionCache, new Set(["v2"]))[0].multiplier, 4);
+  assert.equal(
+    groupProductionSelections(
+      selectionCache,
+      new Map([
+        ["a", "batch"],
+        ["b", "batch"],
+      ]),
+    )[0].multiplier,
+    4,
+  );
   assert.equal(selectionCache[0].updated_at, "server-time");
   assert.equal(dashboardCache[0].multiplier + dashboardCache[1].multiplier, 4);
   assert.equal(
-    342.5 * groupProductionSelections(selectionCache, new Set(["v2"]))[0].multiplier,
+    342.5 *
+      groupProductionSelections(
+        selectionCache,
+        new Map([
+          ["a", "batch"],
+          ["b", "batch"],
+        ]),
+      )[0].multiplier,
     1370,
   );
   assert.equal(selectionCache[2], cached[2]);
@@ -69,13 +93,19 @@ const rows = [
 ];
 test("separate by selection until explicitly merged", () => {
   assert.deepEqual(
-    groupProductionSelections(rows, new Set()).map((g) => g.multiplier),
+    groupProductionSelections(rows, new Map()).map((g) => g.multiplier),
     [2, 1, 1, 4],
   );
 });
 test("same version across orders/slots merges in first-occurrence order, preserving source IDs", () => {
   const before = structuredClone(rows);
-  const groups = groupProductionSelections(rows, new Set(["cream-v1"]));
+  const groups = groupProductionSelections(
+    rows,
+    new Map([
+      ["sandwich", "batch"],
+      ["icing", "batch"],
+    ]),
+  );
   assert.deepEqual(
     groups.map((g) => g.multiplier),
     [3, 1, 4],
@@ -87,12 +117,24 @@ test("same version across orders/slots merges in first-occurrence order, preserv
   assert.deepEqual(rows, before);
 });
 test("split timeline blocks cannot double quantity", () => {
-  const groups = groupProductionSelections([...rows, rows[0]], new Set(["cream-v1"]));
+  const groups = groupProductionSelections(
+    [...rows, rows[0]],
+    new Map([
+      ["sandwich", "batch"],
+      ["icing", "batch"],
+    ]),
+  );
   assert.equal(groups[0].multiplier, 3);
 });
 test("UNMERGE restores the individual selections with no recipe/progress mutations", () => {
-  groupProductionSelections(rows, new Set(["cream-v1"]));
-  assert.equal(groupProductionSelections(rows, new Set()).length, 4);
+  groupProductionSelections(
+    rows,
+    new Map([
+      ["sandwich", "batch"],
+      ["icing", "batch"],
+    ]),
+  );
+  assert.equal(groupProductionSelections(rows, new Map()).length, 4);
 });
 test("aggregate target scales original order allocations proportionally", () => {
   const plan = rescaleProductionSelections([rows[0], rows[2]], 6);
@@ -127,7 +169,65 @@ test("whole-gram split retains every gram and validates independently for each s
 });
 
 test("displayed ingredient grams add up to the displayed whole batch", () => {
-  const lines = [{ id: "egg", grams: 200.36 }, { id: "flour", grams: 101.45 }];
-  assert.deepEqual([...roundIngredientGrams(lines)], [["flour", 102], ["egg", 200]]);
-  assert.equal([...roundIngredientGrams(lines).values()].reduce((sum, grams) => sum + grams, 0), 302);
+  const lines = [
+    { id: "egg", grams: 200.36 },
+    { id: "flour", grams: 101.45 },
+  ];
+  assert.deepEqual(
+    [...roundIngredientGrams(lines)],
+    [
+      ["flour", 102],
+      ["egg", 200],
+    ],
+  );
+  assert.equal(
+    [...roundIngredientGrams(lines).values()].reduce((sum, grams) => sum + grams, 0),
+    302,
+  );
+});
+
+test("only the chosen selections merge, with independent batches of one formula", () => {
+  const selections = ["first", "second", "third", "fourth", "fifth"].map((id) => ({
+    id,
+    formula_version_id: "chiffon",
+    multiplier: 1,
+  }));
+  const batches = new Map([
+    ["first", "8-inch"],
+    ["second", "8-inch"],
+    ["third", "10-inch"],
+    ["fourth", "10-inch"],
+  ]);
+  assert.deepEqual(
+    groupProductionSelections(selections, batches).map((group) =>
+      group.members.map((row) => row.id),
+    ),
+    [["first", "second"], ["third", "fourth"], ["fifth"]],
+  );
+  const changed = [{ ...selections[0], formula_version_id: "revised" }, ...selections.slice(1)];
+  assert.deepEqual(
+    groupProductionSelections(changed, batches).map((group) => group.multiplier),
+    [1, 1, 2, 1],
+  );
+});
+
+test("legacy 1359 g batter yields two equal 680 g fills and consistent ingredient grams", () => {
+  const raw = 399.57 * 3.4;
+  const total = mouldBatchGrams(raw, 2, 680);
+  const weights = equalMouldSplit(total, 2);
+  assert.equal(total, 1360);
+  assert.deepEqual(weights, [680, 680]);
+  assert.equal(formatMouldSplit(weights), "680g × 2");
+  assert.equal(mouldBatchGrams(679, 1, 680), 680);
+  assert.equal(mouldBatchGrams(1500, 2, 680), 1500);
+  assert.equal(mouldBatchGrams(1359, 2, 680, [700, 659]), 1359);
+  assert.equal(formatMouldSplit([700, 659]), "700g × 1 + 659g × 1");
+  const ingredients = roundIngredientGrams([
+    { id: "flour", grams: (600 * total) / raw },
+    { id: "eggs", grams: ((raw - 600) * total) / raw },
+  ]);
+  assert.equal(
+    [...ingredients.values()].reduce((sum, grams) => sum + grams, 0),
+    total,
+  );
 });
