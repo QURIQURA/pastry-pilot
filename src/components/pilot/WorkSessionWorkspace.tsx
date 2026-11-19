@@ -54,7 +54,7 @@ import {
   rescaleProductionSelections,
 } from "@/lib/production-quantity";
 import { resolveSlotGroup } from "@/lib/technique";
-import { mouldAbbr, mouldQty, mouldMultiplier } from "@/lib/component-size";
+import { mouldAbbr, mouldQty, mouldMultiplierForRecipe } from "@/lib/component-size";
 import { AdjustInput, ScaleAllPanel } from "@/components/pilot/RecipeScaleControls";
 import { round2, type ScaleMode } from "@/lib/recipe-scale";
 import { ExperimentCard } from "@/components/pilot/FormulaExperimentsTab";
@@ -678,7 +678,7 @@ export function AddFormulaVersionForm({
   const chosenIngredient = ingredientOptions.find((line) => line.id === planIngredientId);
   const multiplierNum =
     planMode === "MOULD"
-      ? mouldMultiplier(Number(planMouldQty), baseMould, chosenMould)
+      ? mouldMultiplierForRecipe(Number(planMouldQty), baseTotal, chosenMould)
       : planMode === "BASE"
         ? baseTotal > 0 && chosenBase?.weight_g
           ? (Number(chosenBase.weight_g) * Number(planBaseQty)) / baseTotal
@@ -799,7 +799,7 @@ export function AddFormulaVersionForm({
             <Field label="기준 재료"><select className={selectClass} value={planIngredientId} onChange={(e) => setPlanIngredientId(e.target.value)}><option value="">재료 선택…</option>{ingredientOptions.map((line) => <option key={line.id} value={line.id}>{line.name} · {fmtNumber(line.grams, 1)}g</option>)}</select></Field>
             <Field label="목표 재료량(g)"><input className={inputClass} type="number" min="0.01" step="any" value={planIngredientG} onChange={(e) => setPlanIngredientG(e.target.value)} /></Field>
           </div>}
-          <p className="font-mono text-xs">생산 배수: {Number.isFinite(multiplierNum) && multiplierNum > 0 ? `×${fmtNumber(multiplierNum, 3)} · ${fmtNumber(baseTotal * multiplierNum, 0)}g` : "입력값을 선택해 주세요"}</p>
+          <p className="font-mono text-xs">생산 배수: {Number.isFinite(multiplierNum) && multiplierNum > 0 ? `${fmtNumber(baseTotal * multiplierNum, 0)}g` : "입력값을 선택해 주세요"}</p>
         </div>
       )}
       {versionId && (
@@ -816,7 +816,7 @@ export function AddFormulaVersionForm({
                 {Number.isFinite(multiplierNum) && multiplierNum > 0 && multiplierNum !== 1 && (
                   <span className="text-muted-foreground">
                     {" "}
-                    → ×{fmtNumber(multiplierNum, 2)} = {fmtNumber(baseTotal * multiplierNum, 0)}g
+                    → 생산 {fmtNumber(baseTotal * multiplierNum, 0)}g
                   </span>
                 )}
               </p>
