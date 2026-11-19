@@ -1062,6 +1062,7 @@ type WeighingColumn = {
   slot?: string | null;
   mouldId?: string | null;
   mouldQty?: number | null;
+  mergeCount?: number;
   batterSplit?: number[] | null;
   /** 레시피 기본 몰드 — 몰드 개수가 비어 있을 때 배수에서 거꾸로 계산하는 데 사용 */
   baseMouldId?: string | null;
@@ -1094,6 +1095,7 @@ function WeighingView({
   onSelectColumn,
   onColumnOrder,
   onEditPlan,
+  onToggleMerge,
 }: {
   sessionId: string;
   groups: ReturnType<typeof buildWeighingGroups>;
@@ -1102,6 +1104,7 @@ function WeighingView({
   onEditColumn?: (column: WeighingColumn) => void;
   onSelectColumn?: ((id: string) => void) | undefined;
   onColumnOrder?: ((ids: string[]) => void) | undefined;
+  onToggleMerge?: ((versionId: string) => void) | undefined;
   onEditPlan?: ((id: string) => void) | undefined;
 }) {
   const mouldsForTotal = useQuery(mouldsQuery());
@@ -1318,6 +1321,15 @@ function WeighingView({
                     onEditPlan={
                       onEditPlan && !col.groupKey ? () => onEditPlan(col.selectionId) : undefined
                     }
+                    mergeAction={
+                      onToggleMerge && col.mergeCount && col.mergeCount > 1
+                        ? {
+                            count: col.mergeCount,
+                            merged: (col.members?.length ?? 0) > 1,
+                            toggle: () => onToggleMerge(col.formulaVersionId),
+                          }
+                        : undefined
+                    }
                     mouldLabel={
                       col.mouldId && mouldById.get(col.mouldId)
                         ? mouldAbbr(mouldById.get(col.mouldId)!)
@@ -1500,6 +1512,7 @@ function MatrixColumnHeader({
   mouldLabel,
   mouldCount,
   sourceLabel,
+  mergeAction,
 }: {
   id: string;
   /** 블렌드(합성) 포뮬라의 원본 열이면 묶음 제목 — 첫 열에만 글자를 그리고 모든 원본 열 위에 같은 색 띠를 둔다 */
@@ -1518,6 +1531,7 @@ function MatrixColumnHeader({
   mouldLabel?: string | undefined;
   mouldCount?: number | null | undefined;
   sourceLabel?: string | undefined;
+  mergeAction?: { count: number; merged: boolean; toggle: () => void } | undefined;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
@@ -1612,6 +1626,16 @@ function MatrixColumnHeader({
           </button>
         )}
       </div>
+      {mergeAction && (
+        <button
+          type="button"
+          className={cn(buttonClass, "mt-1 min-h-0 py-0.5 text-[11px]")}
+          aria-pressed={mergeAction.merged}
+          onClick={mergeAction.toggle}
+        >
+          {mergeAction.merged ? "병합 해제" : `같은 배합 ${mergeAction.count}건 병합`}
+        </button>
+      )}
       {/* 열 너비 조절 손잡이 — 오른쪽 경계를 드래그 */}
       <div
         role="separator"
@@ -3763,63 +3787,66 @@ export function DayWorkView({
       ),
     [ordered, mergedVersions],
   );
-  const columns: WeighingColumn[] = useMemo(
-    () =>
-      quantityGroups.flatMap((group, idx): WeighingColumn[] => {
-        const r = group.members[0]!;
-        const kids = group.members.length === 1 ? (childrenByParent.get(r.id) ?? []) : [];
-        if (kids.length > 0) {
-          const parentName =
-            r.formula_versions.formulas.components?.name ?? r.formula_versions.formulas.name;
-          return kids.map((k, ki) => ({
-            selectionId: k.id,
-            formulaVersionId: k.formula_version_id,
-            formulaId: k.formula_versions.formulas.id,
-            formulaName:
-              k.formula_versions.formulas.components?.name ?? k.formula_versions.formulas.name,
-            versionNumber: k.formula_versions.version_number,
-            multiplier: Number(k.multiplier),
-            sortOrder: idx + ki / 100,
-            sessionId: r.sessionId,
-            slot: r.slot ?? null,
-            groupKey: r.id,
-            groupLabel: parentName,
-            members: [
-              {
-                selectionId: k.id,
-                sessionId: r.sessionId,
-                label: labels[r.id] ?? r.sessionId.slice(0, 8),
-              },
-            ],
-          }));
-        }
-        return [
-          {
-            selectionId: r.id,
-            formulaVersionId: r.formula_version_id,
-            formulaId: r.formula_versions.formulas.id,
-            formulaName: `${r.formula_versions.formulas.components?.name ?? r.formula_versions.formulas.name}${group.members.length > 1 ? ` · MERGED ${group.members.length}` : ""}`,
-            versionNumber: r.formula_versions.version_number,
-            multiplier: group.multiplier,
-            sortOrder: idx,
-            sessionId: r.sessionId,
-            slot: r.slot ?? null,
-            mouldId: r.mould_id ?? null,
-            batterSplit: group.members.length === 1 ? r.batter_split_g : null,
-            baseMouldId: r.formula_versions.default_mould_id ?? null,
-            mouldQty: group.members.every((m) => m.mould_id === r.mould_id && m.mould_qty != null)
-              ? group.members.reduce((sum, m) => sum + Number(m.mould_qty), 0)
-              : null,
-            members: group.members.map((m) => ({
-              selectionId: m.id,
-              sessionId: m.sessionId,
-              label: labels[m.id] ?? m.sessionId.slice(0, 8),
-            })),
-          },
-        ];
-      }),
-    [quantityGroups, childrenByParent, labels],
-  );
+  const columns: WeighingColumn[] = useMemo(() => {
+    const mergeCounts = new Map<string, number>();
+    for (const { row } of ordered) {
+      mergeCounts.set(row.formula_version_id, (mergeCounts.get(row.formula_version_id) ?? 0) + 1);
+    }
+    return quantityGroups.flatMap((group, idx): WeighingColumn[] => {
+      const r = group.members[0]!;
+      const kids = group.members.length === 1 ? (childrenByParent.get(r.id) ?? []) : [];
+      if (kids.length > 0) {
+        const parentName =
+          r.formula_versions.formulas.components?.name ?? r.formula_versions.formulas.name;
+        return kids.map((k, ki) => ({
+          selectionId: k.id,
+          formulaVersionId: k.formula_version_id,
+          formulaId: k.formula_versions.formulas.id,
+          formulaName:
+            k.formula_versions.formulas.components?.name ?? k.formula_versions.formulas.name,
+          versionNumber: k.formula_versions.version_number,
+          multiplier: Number(k.multiplier),
+          sortOrder: idx + ki / 100,
+          sessionId: r.sessionId,
+          slot: r.slot ?? null,
+          groupKey: r.id,
+          groupLabel: parentName,
+          members: [
+            {
+              selectionId: k.id,
+              sessionId: r.sessionId,
+              label: labels[r.id] ?? r.sessionId.slice(0, 8),
+            },
+          ],
+        }));
+      }
+      return [
+        {
+          selectionId: r.id,
+          formulaVersionId: r.formula_version_id,
+          formulaId: r.formula_versions.formulas.id,
+          formulaName: `${r.formula_versions.formulas.components?.name ?? r.formula_versions.formulas.name}${group.members.length > 1 ? ` · MERGED ${group.members.length}` : ""}`,
+          versionNumber: r.formula_versions.version_number,
+          multiplier: group.multiplier,
+          sortOrder: idx,
+          sessionId: r.sessionId,
+          slot: r.slot ?? null,
+          mouldId: r.mould_id ?? null,
+          mergeCount: mergeCounts.get(r.formula_version_id) ?? 1,
+          batterSplit: group.members.length === 1 ? r.batter_split_g : null,
+          baseMouldId: r.formula_versions.default_mould_id ?? null,
+          mouldQty: group.members.every((m) => m.mould_id === r.mould_id && m.mould_qty != null)
+            ? group.members.reduce((sum, m) => sum + Number(m.mould_qty), 0)
+            : null,
+          members: group.members.map((m) => ({
+            selectionId: m.id,
+            sessionId: m.sessionId,
+            label: labels[m.id] ?? m.sessionId.slice(0, 8),
+          })),
+        },
+      ];
+    });
+  }, [quantityGroups, ordered, childrenByParent, labels]);
   const groups = useMemo(
     () =>
       buildWeighingGroups({
@@ -3984,6 +4011,7 @@ export function DayWorkView({
               onEditColumn={setEditingColumn}
               onSelectColumn={onSelectColumn}
               onColumnOrder={onColumnOrder}
+              onToggleMerge={onToggleMerge}
               onEditPlan={
                 onSelectColumn
                   ? (id) => setPlanId((previous) => (previous === id ? null : id))

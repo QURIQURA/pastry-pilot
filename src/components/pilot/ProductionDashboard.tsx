@@ -398,7 +398,18 @@ export function ProductionDashboard() {
   const tasksById = new Map(
     taskQueries.flatMap((query) => (query.data ?? []).map((task) => [task.id, task] as const)),
   );
-  const productionRecords = dayBlocks
+  const { mergedVersions, toggleMerge } = useProductionMerge(
+    dayWorkItems.map((item) => item.rowId),
+  );
+  const tabByRow = new Map(
+    tabItems.flatMap((items, index) => items.map((item) => [item.rowId, index] as const)),
+  );
+  const groupKeyForRow = (row: DashboardComponentRow) =>
+    mergedVersions.has(row.formulaVersionId)
+      ? `${tabByRow.get(row.id)}:${row.formulaVersionId}`
+      : row.id;
+  const stepKey = (block: WorkBlock) => block.step_name ?? `part-${block.part_no}`;
+  const individualRecords = dayBlocks
     .flatMap((block) => {
       const row = rowById.get(block.work_session_formula_version_id);
       if (!row) return [];
@@ -416,6 +427,42 @@ export function ProductionDashboard() {
       ];
     })
     .sort((a, b) => (a.start ?? "z").localeCompare(b.start ?? "z"));
+  const groupedRecords = new Map<string, typeof individualRecords>();
+  for (const record of individualRecords) {
+    const key = `${groupKeyForRow(record.row)}:${stepKey(record.block)}`;
+    const group = groupedRecords.get(key) ?? [];
+    group.push(record);
+    groupedRecords.set(key, group);
+  }
+  const productionRecords = [...groupedRecords.values()].flatMap((group) => {
+    const recorded = group.filter((record) => record.start || record.end || record.done);
+    // Keep independently recorded work visible when merging after work already took place.
+    if (recorded.length > 1)
+      return group.map((record) => ({
+        ...record,
+        rows: [record.row.id],
+        mergedLabel: undefined,
+      }));
+    const primary = recorded[0] ?? group[0]!;
+    return [
+      {
+        ...primary,
+        rows: group.map((record) => record.row.id),
+        mergedLabel:
+          group.length > 1
+            ? [...new Set(group.map((record) => record.row.order.order_number))].join(" + ")
+            : undefined,
+      },
+    ];
+  });
+  const seenWork = new Set<string>();
+  const workOrder = tabItems.flat().filter((item) => {
+    const row = rowById.get(item.rowId);
+    const key = row ? groupKeyForRow(row) : item.rowId;
+    if (seenWork.has(key)) return false;
+    seenWork.add(key);
+    return true;
+  });
   const hasRunningRecord = productionRecords.some(
     (record) => record.start && !record.end && !record.done,
   );
@@ -439,31 +486,29 @@ export function ProductionDashboard() {
   const completeRecords = productionRecords.filter((record) => record.done);
   const activeIds = new Set(activeItems.map((item) => item.rowId));
   const openRecords = productionRecords.filter(
-    (record) => !record.done && activeIds.has(record.row.id),
+    (record) => !record.done && record.rows.some((id) => activeIds.has(id)),
   );
   const showQueue =
     date >= todayStr &&
     (openRecords.length > 0 ||
       activeItems.some(
-        (item) => !productionRecords.some((record) => record.row.id === item.rowId),
+        (item) => !productionRecords.some((record) => record.rows.includes(item.rowId)),
       ));
   const focusRecord = (id: string) => {
     const index = tabItems.findIndex((items) => items.some((item) => item.rowId === id));
     if (index >= 0) setWorkTab(index);
     setRecordRowId(id);
   };
-  // 같은 레시피 버전 MERGE — 타임라인도 한 블록으로 합쳐 보여준다(같은 반죽을 함께 굽는 것).
-  const { mergedVersions, toggleMerge } = useProductionMerge(dayWorkItems.map((i) => i.rowId));
   // 오른쪽 디테일 창 — 선택한 블록(또는 대기공간에서 고른 카드)의 컴포넌트 하나. 병합돼 있으면 같이 묶인 것만 더한다.
   const detailRowId = selected?.work_session_formula_version_id ?? focusRowId ?? null;
-  const stepKey = (b: WorkBlock) => b.step_name ?? `part-${b.part_no}`;
   /** 병합 그룹: 같은 버전 + 같은 단계의 블록들. 대표(가장 이른 블록)만 그리고 나머지는 숨긴다. */
   const mergeGroups = useMemo(() => {
     const byKey = new Map<string, WorkBlock[]>();
     for (const b of dayBlocks) {
       const row = rowById.get(b.work_session_formula_version_id);
       if (!row || !mergedVersions.has(row.formulaVersionId)) continue;
-      const key = `${row.formulaVersionId}|${stepKey(b)}`;
+      const tab = tabItems.findIndex((items) => items.some((item) => item.rowId === row.id));
+      const key = `${tab}|${row.formulaVersionId}|${stepKey(b)}`;
       byKey.set(key, [...(byKey.get(key) ?? []), b]);
     }
     const hidden = new Set<string>();
@@ -483,7 +528,7 @@ export function ProductionDashboard() {
       });
     }
     return { hidden, primaries };
-  }, [dayBlocks, rowById, mergedVersions]);
+  }, [dayBlocks, rowById, mergedVersions, tabItems]);
   const visibleBlocks = useMemo(
     () => dayBlocks.filter((b) => !mergeGroups.hidden.has(b.id)),
     [dayBlocks, mergeGroups],
@@ -622,44 +667,6 @@ export function ProductionDashboard() {
   });
 
   /** MERGE를 켜는 순간 같은 단계의 블록들을 가장 이른 블록의 시간으로 맞춘다. */
-  const toggleMergeAndAlign = async (versionId: string) => {
-    const turningOn = !mergedVersions.has(versionId);
-    toggleMerge(versionId);
-    if (!turningOn) return;
-    const byStep = new Map<string, WorkBlock[]>();
-    for (const b of dayBlocks) {
-      const row = rowById.get(b.work_session_formula_version_id);
-      if (!row || row.formulaVersionId !== versionId) continue;
-      byStep.set(stepKey(b), [...(byStep.get(stepKey(b)) ?? []), b]);
-    }
-    const sessions = new Set<string>();
-    for (const list of byStep.values()) {
-      const sorted = [...list].sort((a, b) => a.start_time.localeCompare(b.start_time));
-      const primary = sorted[0];
-      if (!primary || new Set(sorted.map((b) => b.work_session_formula_version_id)).size < 2)
-        continue;
-      for (const sib of sorted.slice(1)) {
-        if (sib.start_time === primary.start_time && sib.end_time === primary.end_time) continue;
-        const { error } = await supabase
-          .from("work_blocks")
-          .update({
-            start_time: primary.start_time,
-            end_time: primary.end_time,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", sib.id);
-        if (error) {
-          setWarning(`블록 시간 맞추기 실패: ${error.message}`);
-          return;
-        }
-        const sibRow = rowById.get(sib.work_session_formula_version_id);
-        if (sibRow) sessions.add(sibRow.work_session_id);
-      }
-    }
-    for (const sid of sessions) await syncAfter(sid);
-    await refresh();
-  };
-
   const splitBlock = useMutation({
     mutationFn: async (block: WorkBlock) => {
       const row = rowById.get(block.work_session_formula_version_id);
@@ -1115,7 +1122,7 @@ export function ProductionDashboard() {
                 </button>
               ))}
             <div className="mt-2 flex flex-wrap gap-1">
-              {tabItems.flat().map((item, index) => (
+              {workOrder.map((item, index) => (
                 <button
                   type="button"
                   key={item.rowId}
@@ -1184,7 +1191,7 @@ export function ProductionDashboard() {
                   key={`${date}-${activeTab}`}
                   items={activeItems}
                   mergedVersions={mergedVersions}
-                  onToggleMerge={(versionId) => void toggleMergeAndAlign(versionId)}
+                  onToggleMerge={toggleMerge}
                   labels={Object.fromEntries(
                     rows.map((row) => [row.id, `${row.order.order_number} · ${row.slot ?? ""}`]),
                   )}
@@ -1210,19 +1217,20 @@ export function ProductionDashboard() {
             {showQueue && (
               <section className="border border-border bg-card p-3">
                 <h3 className="font-semibold">생산 기록</h3>
-                {openRecords.map(({ block, row }) => (
+                {openRecords.map(({ block, row, rows, mergedLabel }) => (
                   <ProductionBlockRecord
                     key={block.id}
                     block={block}
                     row={row}
                     title={blockTitle(block, row)}
-                    active={recordRowId === row.id}
+                    active={recordRowId != null && rows.includes(recordRowId)}
+                    mergedLabel={mergedLabel}
                     onStarted={ensureSessionStarted}
                   />
                 ))}
                 {activeItems
                   .filter(
-                    (item) => !productionRecords.some((record) => record.row.id === item.rowId),
+                    (item) => !productionRecords.some((record) => record.rows.includes(item.rowId)),
                   )
                   .map((item) => (
                     <p key={item.rowId} className="py-1 text-xs">
@@ -1233,13 +1241,14 @@ export function ProductionDashboard() {
             )}
             <section className="border border-border bg-card p-3">
               <h3 className="font-semibold">완료 목록 · {completeRecords.length}</h3>
-              {completeRecords.map(({ block, row }) => (
+              {completeRecords.map(({ block, row, rows, mergedLabel }) => (
                 <ProductionBlockRecord
                   key={block.id}
                   block={block}
                   row={row}
                   title={blockTitle(block, row)}
-                  active={recordRowId === row.id}
+                  active={recordRowId != null && rows.includes(recordRowId)}
+                  mergedLabel={mergedLabel}
                   onStarted={ensureSessionStarted}
                 />
               ))}
@@ -1249,13 +1258,14 @@ export function ProductionDashboard() {
                 <h3 className="font-semibold">생산 기록</h3>
                 {productionRecords
                   .filter((record) => !record.done)
-                  .map(({ block, row }) => (
+                  .map(({ block, row, rows, mergedLabel }) => (
                     <ProductionBlockRecord
                       key={block.id}
                       block={block}
                       row={row}
                       title={blockTitle(block, row)}
-                      active={recordRowId === row.id}
+                      active={recordRowId != null && rows.includes(recordRowId)}
+                      mergedLabel={mergedLabel}
                       onStarted={ensureSessionStarted}
                     />
                   ))}
@@ -2353,7 +2363,7 @@ function ProductionBlockRecord({
   active: boolean;
   onStarted: (sessionId: string, iso: string) => void | Promise<void>;
   /** 병합 컴포넌트의 한 벌 기록 — 이 기록이 함께 다루는 오더들 */
-  mergedLabel?: string;
+  mergedLabel?: string | undefined;
 }) {
   const tasks = useQuery(workSessionTasksQuery(row.work_session_id));
   const task = tasks.data?.find((item) => item.id === block.work_session_task_id);
