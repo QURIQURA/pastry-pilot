@@ -171,23 +171,27 @@ export function TimelineSettingsPanel({
           <button
             type="button"
             className={buttonClass}
-            aria-expanded={plannerOpen}
+            disabled={plannerOpen}
             onClick={() => {
-              // Closing the Planner window reloads availability so the timeline reflects edits.
-              if (plannerOpen) void query.refetch();
-              setPlannerOpen((open) => !open);
+              // Google sign-in is blocked inside frames, so Planner opens as a small popup window.
+              const popup = window.open(
+                safePlannerUrl,
+                "wann-planner",
+                "popup,width=520,height=780",
+              );
+              if (!popup) return;
+              popup.focus();
+              setPlannerOpen(true);
+              const timer = window.setInterval(() => {
+                if (!popup.closed) return;
+                window.clearInterval(timer);
+                setPlannerOpen(false);
+                void query.refetch();
+              }, 1000);
             }}
           >
-            {plannerOpen ? "Planner 닫고 새로고침" : "Planner 열기"}
+            {plannerOpen ? "Planner 창 열림…" : "Planner 작은 창 열기"}
           </button>
-          <a
-            href={safePlannerUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="text-[11px] underline"
-          >
-            새 창 ↗
-          </a>
           <button
             type="button"
             className="text-[11px] underline"
@@ -196,31 +200,24 @@ export function TimelineSettingsPanel({
             ↻ 가용시간 다시 불러오기
           </button>
         </div>
-        {plannerOpen && (
-          <>
-            <iframe
-              title="WANN Planner"
-              src={safePlannerUrl}
-              className="h-[70vh] min-h-[420px] w-full border border-border bg-background"
-            />
-            <label className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-              Planner 주소
-              <input
-                aria-label="Planner 주소"
-                className={cn(inputClass, "min-w-0 flex-1")}
-                defaultValue={plannerUrl}
-                onBlur={(e) => {
-                  const next = e.target.value.trim();
-                  if (next.startsWith("https://")) setPlannerUrl(next);
-                }}
-              />
-            </label>
-            <p className="text-[11px] text-muted-foreground">
-              처음 한 번은 이 창 안에서 Planner 로그인이 필요할 수 있어요. 창이 비어 있으면 새
-              창으로 여세요. 수정한 뒤 닫으면 타임라인 가용시간을 다시 불러와요.
-            </p>
-          </>
-        )}
+        <p className="text-[11px] text-muted-foreground">
+          Planner 창에서 수정하고 닫으면 타임라인 가용시간을 자동으로 다시 불러와요. 창이 안 뜨면
+          브라우저의 팝업 차단을 풀어 주세요.
+        </p>
+        <details>
+          <summary className="cursor-pointer text-[11px] text-muted-foreground">
+            Planner 주소
+          </summary>
+          <input
+            aria-label="Planner 주소"
+            className={cn(inputClass, "mt-1 w-full")}
+            defaultValue={plannerUrl}
+            onBlur={(e) => {
+              const next = e.target.value.trim();
+              if (next.startsWith("https://")) setPlannerUrl(next);
+            }}
+          />
+        </details>
       </div>
     </div>
   );
