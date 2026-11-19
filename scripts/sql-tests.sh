@@ -11,4 +11,5 @@ psql "$SUPABASE_DB_URL" -X -q -v ON_ERROR_STOP=1 -f tests/supabase-stub.sql
 node scripts/supabase-migrate.mjs apply
 node scripts/supabase-migrate.mjs apply   # second run must find nothing to do
 psql "$SUPABASE_DB_URL" -X -q -v ON_ERROR_STOP=1 -f tests/dev-board-rls.sql
+psql "$SUPABASE_DB_URL" -X -q -v ON_ERROR_STOP=1 -f tests/production-date-only.sql
 echo "SQL tests passed."

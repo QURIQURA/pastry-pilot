@@ -45,7 +45,7 @@ import {
   type DashboardComponentRow,
   type WorkBlock,
 } from "@/lib/queries";
-import { addDays, formatDelivery, koreanWeekdayShort, toLocalDateString } from "@/lib/datetime";
+import { addDays, formatDelivery, koreanWeekdayShort, nowLocalTime, toLocalDateString } from "@/lib/datetime";
 import {
   removeDailyTask,
   syncDailyTaskToPlanner,
@@ -86,10 +86,7 @@ const ORDER_PALETTE = [
   { bg: "#EEE9D2", accent: "#B5A242", text: "#5A4E12" },
 ];
 
-const nowMin = (): number => {
-  const d = new Date();
-  return d.getHours() * 60 + d.getMinutes();
-};
+const nowMin = () => toMin(nowLocalTime());
 
 function toMin(t: string): number {
   const [h, m] = t.split(":");
@@ -161,10 +158,7 @@ export function ProductionDashboard() {
   const queryClient = useQueryClient();
   const components = useQuery(dashboardComponentsQuery());
   const blocksQuery = useQuery(workBlocksQuery());
-  const todayStr = (() => {
-    const n = new Date();
-    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
-  })();
+  const todayStr = toLocalDateString();
   const doneTaskIds = useQuery(doneTaskIdsQuery());
   const [date, setDate] = useState(() => toLocalDateString());
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -177,9 +171,11 @@ export function ProductionDashboard() {
       const parsed: unknown = JSON.parse(saved);
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
       return Object.fromEntries(
-        Object.entries(parsed).filter(([date, ids]) =>
-          /^\d{4}-\d{2}-\d{2}$/.test(date) &&
-          Array.isArray(ids) && ids.every((id) => typeof id === "string"),
+        Object.entries(parsed).filter(
+          ([date, ids]) =>
+            /^\d{4}-\d{2}-\d{2}$/.test(date) &&
+            Array.isArray(ids) &&
+            ids.every((id) => typeof id === "string"),
         ),
       ) as Record<string, string[]>;
     } catch {
@@ -188,7 +184,10 @@ export function ProductionDashboard() {
   });
   useEffect(() => {
     try {
-      window.localStorage.setItem("pilot.production.secondMatrixRows.v1", JSON.stringify(secondMatrixRows));
+      window.localStorage.setItem(
+        "pilot.production.secondMatrixRows.v1",
+        JSON.stringify(secondMatrixRows),
+      );
     } catch {
       // Storage may be disabled; keep the current in-memory selection usable.
     }
@@ -246,7 +245,7 @@ export function ProductionDashboard() {
       // Only genuinely unscheduled components belong in the waiting pool.
       // A component assigned on any date is already scheduled, even when
       // its time block is in the past or on a different selected day.
-      if ((blocksByRow.get(r.id) ?? []).length > 0) continue;
+      if (r.plannedDate || (blocksByRow.get(r.id) ?? []).length > 0) continue;
       const g = groups.get(r.order.id) ?? { order: r.order, rows: [] };
       g.rows.push(r);
       groups.set(r.order.id, g);
@@ -267,7 +266,8 @@ export function ProductionDashboard() {
             isBlockPast(b) &&
             !(b.work_session_task_id && doneTaskIds.data.has(b.work_session_task_id)),
         )
-      ) ids.add(r.id);
+      )
+        ids.add(r.id);
     }
     return ids;
   }, [rows, blocksByRow, doneTaskIds.data]);
@@ -318,6 +318,10 @@ export function ProductionDashboard() {
       blocks.filter((b) => b.block_date === date && rowById.has(b.work_session_formula_version_id)),
     [blocks, date, rowById],
   );
+  const dateOnlyRows = useMemo(
+    () => rows.filter((r) => isActive(r) && r.plannedDate === date && !blocksByRow.has(r.id)),
+    [rows, date, blocksByRow],
+  );
   const effectiveEnd = (b: WorkBlock) => (resize?.id === b.id ? resize.endMin : toMin(b.end_time));
   const dailyTemplates = useMemo(() => dailyTemplatesQuery.data ?? [], [dailyTemplatesQuery.data]);
   const dayDailies = useMemo(
@@ -351,9 +355,10 @@ export function ProductionDashboard() {
       bySession.set(r.work_session_id, list);
     };
     for (const b of sorted) add(b.work_session_formula_version_id);
+    for (const row of dateOnlyRows) add(row.id);
     if (focusRowId && (blocksByRow.get(focusRowId) ?? []).length === 0) add(focusRowId);
     return [...bySession.entries()].map(([sid, rowIds]) => ({ sid, rowIds }));
-  }, [dayBlocks, rowById, blocksByRow, focusRowId]);
+  }, [dayBlocks, dateOnlyRows, rowById, blocksByRow, focusRowId]);
   // 합쳐진 WORK VIEW용: 타임라인 시간순으로 (세션 상관없이) 컴포넌트 열을 나열
   const dayWorkItems = useMemo(
     () =>
@@ -375,7 +380,10 @@ export function ProductionDashboard() {
   const moveMatrixRow = (rowId: string, toSecond: boolean) => {
     setSecondMatrixRows((prev) => {
       const ids = prev[date] ?? [];
-      return { ...prev, [date]: toSecond ? [...new Set([...ids, rowId])] : ids.filter((id) => id !== rowId) };
+      return {
+        ...prev,
+        [date]: toSecond ? [...new Set([...ids, rowId])] : ids.filter((id) => id !== rowId),
+      };
     });
   };
   // 같은 레시피 버전 MERGE — 타임라인도 한 블록으로 합쳐 보여준다(같은 반죽을 함께 굽는 것).
@@ -560,24 +568,6 @@ export function ProductionDashboard() {
     },
     onSuccess: refresh,
   });
-
-  /**
-   * 타이머 실제 시각에 맞춰 블록을 맞춘다 — 시작은 타이머 시작, 종료는 타이머 종료(주어질 때).
-   * 종료가 없으면 길이를 유지한 채 이동. 병합 대표면 같이 굽는 블록도 따라간다.
-   */
-  const retimeBlock = async (block: WorkBlock, startIso: string | null, endIso?: string) => {
-    const hm = (iso: string) => {
-      const d = new Date(iso);
-      return d.getHours() * 60 + d.getMinutes();
-    };
-    const oldStart = toMin(block.start_time);
-    const oldEnd = toMin(block.end_time);
-    const startMin = startIso ? hm(startIso) : oldStart;
-    let endMin = startMin + (oldEnd - oldStart);
-    if (endIso && hm(endIso) > startMin) endMin = hm(endIso);
-    if (startMin === oldStart && endMin === oldEnd) return;
-    await updateBlock.mutateAsync({ block, startMin, endMin });
-  };
 
   /** MERGE를 켜는 순간 같은 단계의 블록들을 가장 이른 블록의 시간으로 맞춘다. */
   const toggleMergeAndAlign = async (versionId: string) => {
@@ -977,6 +967,77 @@ export function ProductionDashboard() {
         </p>
       )}
 
+      {/* Two independently rendered weighing matrices, grouped by ingredient within each table. */}
+      {dayWorkItems.length > 0 && (
+        <section className="space-y-3" aria-label="Split production weighing matrices">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="label-caps text-xs">WORK VIEW · WEIGHING MATRICES</span>
+            <span className="text-xs text-muted-foreground">
+              Choose which recipes belong in the lower table. Quantities and progress remain linked.
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {dayWorkItems.map(({ rowId }) => (
+              <label
+                key={rowId}
+                className="flex cursor-pointer items-center gap-2 border border-border px-2 py-1 text-xs"
+              >
+                <input
+                  type="checkbox"
+                  checked={secondMatrixIds.includes(rowId)}
+                  onChange={(e) => moveMatrixRow(rowId, e.target.checked)}
+                />
+                <span>{`${rowById.get(rowId)?.order.order_number ?? ""} · ${rowById.get(rowId)?.slot ?? rowId.slice(0, 8)}`}</span>
+                <span className="text-muted-foreground">
+                  {secondMatrixIds.includes(rowId) ? "TABLE 2" : "TABLE 1"}
+                </span>
+              </label>
+            ))}
+          </div>
+          {firstMatrixItems.length > 0 && (
+            <div>
+              <p className="label-caps mb-2 text-xs">TABLE 1</p>
+              <DayWorkView
+                part="WORK_VIEW"
+                key={`work-first-${date}`}
+                items={firstMatrixItems}
+                mergedVersions={mergedVersions}
+                onToggleMerge={(versionId) => void toggleMergeAndAlign(versionId)}
+                labels={Object.fromEntries(
+                  rows.map((r) => [r.id, `${r.order.order_number} · ${r.slot ?? ""}`]),
+                )}
+              />
+            </div>
+          )}
+          {secondMatrixItems.length > 0 && (
+            <div>
+              <p className="label-caps mb-2 text-xs">TABLE 2</p>
+              <DayWorkView
+                part="WORK_VIEW"
+                key={`work-second-${date}`}
+                items={secondMatrixItems}
+                mergedVersions={mergedVersions}
+                onToggleMerge={(versionId) => void toggleMergeAndAlign(versionId)}
+                labels={Object.fromEntries(
+                  rows.map((r) => [r.id, `${r.order.order_number} · ${r.slot ?? ""}`]),
+                )}
+              />
+            </div>
+          )}
+        </section>
+      )}
+
+      {dateOnlyRows.length > 0 && (
+        <section className="space-y-2 border border-border bg-card p-3">
+          <h3 className="label-caps text-xs">{date} · 시간 미정</h3>
+          {dateOnlyRows.map((row) => (
+            <p key={row.id} className="text-xs">
+              {row.order.order_number} · {row.componentName} · {sizeText(row)}
+            </p>
+          ))}
+        </section>
+      )}
+
       <div className="space-y-3">
         {/* ── 작업 대기공간 (맨 위 1열) ── */}
         <section
@@ -1043,8 +1104,7 @@ export function ProductionDashboard() {
             <p className="font-mono text-xs uppercase text-muted-foreground">LOADING…</p>
           ) : poolGroups.length === 0 ? (
             <p className="font-mono text-xs text-muted-foreground">
-              미배정 컴포넌트가 없어요. ORDERS 탭에서 오더에 컴포넌트를 지정하면 여기에
-              쌓여요.
+              미배정 컴포넌트가 없어요. ORDERS 탭에서 오더에 컴포넌트를 지정하면 여기에 쌓여요.
             </p>
           ) : (
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -1521,7 +1581,6 @@ export function ProductionDashboard() {
                               block={b}
                               row={row}
                               onStarted={ensureSessionStarted}
-                              onRetime={retimeBlock}
                             />
                           </div>
                           <div className="px-2">
@@ -2012,7 +2071,6 @@ export function ProductionDashboard() {
                               title={blockTitle(block, row)}
                               active={selected?.id === block.id}
                               onStarted={ensureSessionStarted}
-                              onRetime={retimeBlock}
                             />
                           ))
                         ) : (
@@ -2058,7 +2116,7 @@ export function ProductionDashboard() {
                         title={blockTitle(primary.block, primary.row)}
                         active={items.some((i) => selected?.id === i.block.id)}
                         onStarted={ensureSessionStarted}
-                        onRetime={retimeBlock}
+
                         mergedLabel={orders.join(" + ")}
                       />
                     );
@@ -2072,37 +2130,6 @@ export function ProductionDashboard() {
           </aside>
         </div>
       </div>
-
-      {/* Two independently rendered weighing matrices, grouped by ingredient within each table. */}
-      {dayWorkItems.length > 0 && (
-        <section className="space-y-3" aria-label="Split production weighing matrices">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="label-caps text-xs">WORK VIEW · WEIGHING MATRICES</span>
-            <span className="text-xs text-muted-foreground">Choose which recipes belong in the lower table. Quantities and progress remain linked.</span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {dayWorkItems.map(({ rowId }) => (
-              <label key={rowId} className="flex cursor-pointer items-center gap-2 border border-border px-2 py-1 text-xs">
-                <input type="checkbox" checked={secondMatrixIds.includes(rowId)} onChange={(e) => moveMatrixRow(rowId, e.target.checked)} />
-                <span>{`${rowById.get(rowId)?.order.order_number ?? ""} · ${rowById.get(rowId)?.slot ?? rowId.slice(0, 8)}`}</span>
-                <span className="text-muted-foreground">{secondMatrixIds.includes(rowId) ? "TABLE 2" : "TABLE 1"}</span>
-              </label>
-            ))}
-          </div>
-          {firstMatrixItems.length > 0 && (
-            <div>
-              <p className="label-caps mb-2 text-xs">TABLE 1</p>
-              <DayWorkView part="WORK_VIEW" key={`work-first-${date}`} items={firstMatrixItems} mergedVersions={mergedVersions} onToggleMerge={(versionId) => void toggleMergeAndAlign(versionId)} labels={Object.fromEntries(rows.map((r) => [r.id, `${r.order.order_number} · ${r.slot ?? ""}`]))} />
-            </div>
-          )}
-          {secondMatrixItems.length > 0 && (
-            <div>
-              <p className="label-caps mb-2 text-xs">TABLE 2</p>
-              <DayWorkView part="WORK_VIEW" key={`work-second-${date}`} items={secondMatrixItems} mergedVersions={mergedVersions} onToggleMerge={(versionId) => void toggleMergeAndAlign(versionId)} labels={Object.fromEntries(rows.map((r) => [r.id, `${r.order.order_number} · ${r.slot ?? ""}`]))} />
-            </div>
-          )}
-        </section>
-      )}
 
       {/* ── 세션 메모 ── */}
       {workspaceSessions.length > 0 ? (
@@ -2144,7 +2171,6 @@ function ProductionBlockRecord({
   title,
   active,
   onStarted,
-  onRetime,
   mergedLabel,
 }: {
   block: WorkBlock;
@@ -2152,9 +2178,6 @@ function ProductionBlockRecord({
   title: string;
   active: boolean;
   onStarted: (sessionId: string, iso: string) => void | Promise<void>;
-  onRetime?:
-    | ((block: WorkBlock, startIso: string | null, endIso?: string) => void | Promise<void>)
-    | undefined;
   /** 병합 컴포넌트의 한 벌 기록 — 이 기록이 함께 다루는 오더들 */
   mergedLabel?: string;
 }) {
@@ -2189,7 +2212,7 @@ function ProductionBlockRecord({
           row={row}
           title={title}
           onStarted={onStarted}
-          onRetime={onRetime}
+
           embedded
         />
       )}

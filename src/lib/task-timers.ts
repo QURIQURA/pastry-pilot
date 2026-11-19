@@ -39,3 +39,19 @@ export function readTimers(task: Pick<WorkSessionTask, "timers" | "timer_minutes
 /** 타이머 남은 초 — 진행 중이 아니면 null. minutes가 없으면 경과 초를 음수 없이 돌려주려고 따로 elapsed를 쓴다. */
 export const timerElapsedSec = (t: TaskTimer, now: Date): number =>
   t["started_at"] ? Math.max(0, (now.getTime() - new Date(t["started_at"]).getTime()) / 1000) : 0;
+
+/** Derive actuals from recorded instants only. Planned blocks are never timer inputs. */
+export function taskTimerSummary(timers: TaskTimer[]) {
+  const runningCount = timers.filter((timer) => timer.started_at && !timer.done_at).length;
+  const starts = timers
+    .flatMap((timer) => (timer.started_at ? [timer.started_at] : []))
+    .sort((a, b) => Date.parse(a) - Date.parse(b));
+  const finishes = timers
+    .flatMap((timer) => (timer.started_at && timer.done_at ? [timer.done_at] : []))
+    .sort((a, b) => Date.parse(a) - Date.parse(b));
+  return {
+    runningCount,
+    actual_started_at: starts[0] ?? null,
+    completed_at: runningCount > 0 ? null : (finishes.at(-1) ?? null),
+  };
+}

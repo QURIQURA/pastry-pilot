@@ -33,7 +33,7 @@ const fromRow = (row: WorkSessionFormulaVersionRow) => ({
   pinned: row.version_pinned,
   // 몰드 기준 생산: 목표 몰드 id / 개수(""이면 저장된 배수에서 계산)
   mould: row.mould_id ?? "",
-  qty: "",
+  qty: row.mould_qty == null ? "" : String(row.mould_qty),
   // 기준중량 기준 생산: SETTINGS > BASE WEIGHTS 프리셋 id / 개수
   bw: row.base_weight_id ?? "",
   bwQty: row.base_weight_qty == null ? "1" : String(row.base_weight_qty),
@@ -101,9 +101,30 @@ export function OrderComponentPlanRow({
   const saveSched = useMutation({
     mutationFn: async () => {
       if (!sched.start) {
+        if (oneBlock?.work_session_task_id) {
+          const { data: task, error } = await supabase
+            .from("work_session_tasks")
+            .select("status,actual_started_at,completed_at,timers,note,batter_height_mm,observation_status,observation_height_start_mm,observation_height_mid_mm,observation_height_end_mm,observation_temperature_c")
+            .eq("id", oneBlock.work_session_task_id)
+            .single();
+          if (error) throw error;
+          if (task.status !== "NOT_STARTED" || task.actual_started_at || task.completed_at ||
+              task.note || task.batter_height_mm != null || task.observation_status ||
+              task.observation_height_start_mm != null || task.observation_height_mid_mm != null ||
+              task.observation_height_end_mm != null || task.observation_temperature_c != null ||
+              (Array.isArray(task.timers) && task.timers.some((timer) =>
+                timer && typeof timer === "object" && !Array.isArray(timer) &&
+                (timer["started_at"] || timer["done_at"])))) {
+            throw new Error("작업 기록이 있는 시간 블록은 기존 기록을 보존하기 위해 유지합니다.");
+          }
+        }
         const { error } = await supabase.from("work_session_formula_versions")
           .update({ planned_date: sched.date || null }).eq("id", row.id);
         if (error) throw error;
+        if (oneBlock) {
+          const removed = await syncWorkSessionToPlanner(row.work_session_id, { removeBlockId: oneBlock.id });
+          if (removed) throw new Error(removed);
+        }
         return;
       }
       if (!sched.date) throw new Error("시작 시간을 지정하려면 날짜도 필요합니다");
@@ -205,7 +226,7 @@ export function OrderComponentPlanRow({
   const bwQtyNum = Number(draft.bwQty);
   const bwTargetG = useBase && bwQtyNum > 0 ? Number(bwPreset!.weight_g) * bwQtyNum : null;
   const bwMultiplier =
-    bwTargetG != null ? Math.round((bwTargetG / base) * 10000) / 10000 : Number.NaN;
+    bwTargetG != null ? bwTargetG / base : Number.NaN;
   // 저장된 목표 중량이 어떤 기준중량의 정수배면 그 프리셋을 처음부터 선택해 보여준다.
   useEffect(() => {
     if (
@@ -251,7 +272,7 @@ export function OrderComponentPlanRow({
   const ingLine = ingLines.find((l) => l.id === draft.ing);
   const ingTarget = Number(draft.ingG);
   const useIng = mode === "ING" && Boolean(ingLine) && ingTarget > 0;
-  const ingMultiplier = useIng ? Math.round((ingTarget / ingLine!.g) * 10000) / 10000 : Number.NaN;
+  const ingMultiplier = useIng ? ingTarget / ingLine!.g : Number.NaN;
   const effectiveMultiplierAll = useBase
     ? bwMultiplier
     : useIng
@@ -704,7 +725,7 @@ export function OrderComponentPlanRow({
                     aria-label="작업 날짜"
                     className={inputClass}
                     value={sched.date}
-                    onChange={(e) => setSched((v) => ({ ...v, date: e.target.value }))}
+                    onChange={(e) => setSched((v) => ({ ...v, date: e.target.value, start: e.target.value ? v.start : "" }))}
                   />
                 </label>
                 <label className="text-[11px]">
@@ -739,6 +760,10 @@ export function OrderComponentPlanRow({
             disabled={
               (!dirty && !schedDirty) ||
               conflict ||
+              blocksQ.isPending ||
+              blocksQ.isError ||
+              save.isPending ||
+              saveSched.isPending ||
               versions.isError ||
               ingredients.isError
             }

@@ -14,10 +14,22 @@ import {
   type DashboardComponentRow,
   type WorkBlock,
 } from "@/lib/queries";
-import { formatDuration, formatTime, localDateTimeToISO } from "@/lib/datetime";
+import {
+  formatDateTime,
+  formatDuration,
+  formatTime,
+  localDateTimeToISO,
+  toLocalDateString,
+} from "@/lib/datetime";
 import { hasObservationFields, type ChecklistItem, type WorkSessionTask } from "@/lib/workflow";
 import { syncWorkSessionToPlanner } from "@/lib/work-session";
-import { newTimer, readTimers, timerElapsedSec, type TaskTimer } from "@/lib/task-timers";
+import {
+  newTimer,
+  readTimers,
+  taskTimerSummary,
+  timerElapsedSec,
+  type TaskTimer,
+} from "@/lib/task-timers";
 import { buttonClass, primaryButtonClass } from "@/components/pilot/ui";
 import { cn } from "@/lib/utils";
 
@@ -81,25 +93,16 @@ function TimeText({
   );
 }
 
-function timeValue(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-const nowHm = () => {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-};
+const timeValue = (iso: string | null) => (iso ? formatTime(iso) : "");
 
 const numOrNull = (v: string) => (v.trim() ? Number(v) : null);
 
 /** 타이머 목록 저장 — 레거시 timer_minutes는 첫 타이머로 옮겨졌으므로 비운다. */
-async function saveTimers(task: Pick<WorkSessionTask, "id">, timers: TaskTimer[]) {
+async function saveTimers(task: WorkSessionTask, timers: TaskTimer[], updateSummary = false) {
   const userId = await currentUserId();
-  const { error } = await supabase
+  const { runningCount, ...summary } = taskTimerSummary(timers);
+  if (runningCount > 1) return { message: "이 작업에서 이미 타이머가 실행 중이에요." };
+  const { data, error } = await supabase
     .from("work_session_tasks")
     .update({
       timers: timers.map((t) => ({
@@ -107,10 +110,17 @@ async function saveTimers(task: Pick<WorkSessionTask, "id">, timers: TaskTimer[]
         id: t.id === "default" ? crypto.randomUUID() : t.id,
       })) as never,
       timer_minutes: null,
+      ...(updateSummary && {
+        ...summary,
+        ...(runningCount > 0 && { status: "IN_PROGRESS" as const }),
+      }),
     })
     .eq("id", task.id)
-    .eq("user_id", userId);
-  return error;
+    .eq("user_id", userId)
+    .eq("updated_at", task.updated_at)
+    .select("id")
+    .maybeSingle();
+  return error ?? (data ? null : { message: "작업 기록이 변경됐어요. 다시 시도해 주세요." });
 }
 
 export function BlockTaskDetails({
@@ -118,7 +128,6 @@ export function BlockTaskDetails({
   row,
   title,
   onStarted,
-  onRetime,
   embedded = false,
 }: {
   block: WorkBlock;
@@ -127,10 +136,6 @@ export function BlockTaskDetails({
   embedded?: boolean;
   /** TASK 시작시각이 기록되면 세션이 PLANNED일 때 IN_PROGRESS로 올리도록 알린다 */
   onStarted?: (sessionId: string, iso: string) => void | Promise<void>;
-  /** 실제 시작시각이 정해지면 타임라인 블록을 그 시각에 맞춘다 */
-  onRetime?:
-    | ((block: WorkBlock, startIso: string | null, endIso?: string) => void | Promise<void>)
-    | undefined;
 }) {
   const queryClient = useQueryClient();
   const sessionId = row.work_session_id;
@@ -228,23 +233,26 @@ export function BlockTaskDetails({
   // 타이머 하나의 시작/종료/분을 고친다 — 분은 시작(초 버림)에 더해 종료로 환산하고, TASK의 Start/End도 타이머들에 맞춘다.
   const editTimer = async (
     t: TaskTimer,
-    edit: { start?: string; end?: string; minutes?: number },
+    edit: { start?: string; end?: string; minutes?: number; now?: "start" | "end" },
   ) => {
-    const toIso = (hm: string) => (hm ? localDateTimeToISO(block.block_date, hm) : null);
+    const toIso = (hm: string, existing: string | null) =>
+      hm
+        ? localDateTimeToISO(
+            existing ? toLocalDateString(new Date(existing)) : block.block_date,
+            hm,
+          )
+        : null;
     let started = t.started_at;
     let done = t.done_at;
-    if (edit.start !== undefined) started = toIso(edit.start);
-    if (edit.end !== undefined) done = toIso(edit.end);
+    if (edit.start !== undefined) started = toIso(edit.start, started);
+    if (edit.end !== undefined) done = toIso(edit.end, done ?? started);
+    if (edit.now === "start") started = new Date().toISOString();
+    if (edit.now === "end") done = new Date().toISOString();
     if (edit.minutes !== undefined) {
       started = started ?? localDateTimeToISO(block.block_date, block.start_time.slice(0, 5));
       done = new Date(
         (Math.floor(new Date(started).getTime() / 60_000) + edit.minutes) * 60_000,
       ).toISOString();
-    }
-    // 블록을 다른 날짜로 옮기면 예전 날짜의 종료 기록이 남는다 — 새 시작을 입력하면 낡은 종료는 버리고 진행 중으로 둔다.
-    if (edit.start !== undefined && started && done) {
-      const day = (iso: string) => new Date(iso).toLocaleDateString("sv");
-      if (day(done) !== block.block_date && new Date(done) < new Date(started)) done = null;
     }
     if (started && done && new Date(done) < new Date(started)) {
       setError("종료 시각이 시작보다 빨라요.");
@@ -253,26 +261,10 @@ export function BlockTaskDetails({
     const next = timers.map((x) =>
       x.id === t.id ? { ...x, started_at: started, done_at: done } : x,
     );
-    const e = await saveTimers(task, next);
-    if (e) {
-      setError(`타이머 저장 실패 — ${e.message}`);
-      return;
-    }
-    setError(null);
-    const starts = next.map((x) => x.started_at).filter((x): x is string => Boolean(x));
-    const anyRunning = next.some((x) => x.started_at && !x.done_at);
-    const dones = next.map((x) => x.done_at).filter((x): x is string => Boolean(x));
-    const taskPatch: { actual_started_at?: string | null; completed_at?: string | null } = {};
-    if (starts.length) taskPatch.actual_started_at = [...starts].sort()[0] ?? null;
-    if (!anyRunning && dones.length)
-      taskPatch.completed_at = [...dones].sort().slice(-1)[0] ?? null;
-    if (Object.keys(taskPatch).length) await update(taskPatch, "시간");
-    else await refresh();
-    if (taskPatch.actual_started_at) {
-      await onStarted?.(sessionId, taskPatch.actual_started_at);
-      // 블록의 시작·종료도 타이머 시작·종료에 맞춘다(진행 중 타이머가 있으면 종료는 건드리지 않음).
-      await onRetime?.(block, taskPatch.actual_started_at, taskPatch.completed_at ?? undefined);
-    }
+    const e = await saveTimers(task, next, true);
+    setError(e ? `타이머 저장 실패 — ${e.message}` : null);
+    await refresh();
+    if (!e && started) await onStarted?.(sessionId, started);
   };
   const patchTimer = (id: string, patch: Partial<TaskTimer>) =>
     saveTimerList(timers.map((t) => (t.id === id ? { ...t, ...patch } : t)));
@@ -303,8 +295,12 @@ export function BlockTaskDetails({
         <div className="flex flex-wrap items-baseline justify-between gap-x-3">
           <span className="label-caps text-[11px] text-muted-foreground">시간 기록</span>
           <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
-            {task.actual_started_at ? timeValue(task.actual_started_at) : "--:--"} →{" "}
-            {task.completed_at ? timeValue(task.completed_at) : "진행 중"}
+            {task.actual_started_at ? formatDateTime(task.actual_started_at) : "--"} →{" "}
+            {task.completed_at
+              ? formatDateTime(task.completed_at)
+              : task.actual_started_at
+                ? "진행 중"
+                : "--"}
             {doneMinutes !== null && doneMinutes > 0 && <> · 총 {doneMinutes}분</>}
             {workMinutes > 0 && workMinutes !== doneMinutes && <> · 실작업 {workMinutes}분</>}
           </span>
@@ -371,7 +367,7 @@ export function BlockTaskDetails({
                       type="button"
                       className={`${buttonClass} !min-h-[26px] px-1.5 text-[11px]`}
                       title="지금 시작"
-                      onClick={() => void editTimer(t, { start: nowHm() })}
+                      onClick={() => void editTimer(t, { now: "start" })}
                     >
                       ▶
                     </button>
@@ -380,7 +376,7 @@ export function BlockTaskDetails({
                       type="button"
                       className={`${buttonClass} !min-h-[26px] px-1.5 text-[11px]`}
                       title="지금 종료"
-                      onClick={() => void editTimer(t, { end: nowHm() })}
+                      onClick={() => void editTimer(t, { now: "end" })}
                     >
                       ■
                     </button>
@@ -430,7 +426,10 @@ export function BlockTaskDetails({
             <span className="text-xs text-muted-foreground">mm</span>
           </span>
         </label>
+      </div>
 
+      <details className="space-y-2">
+        <summary className="cursor-pointer text-xs text-muted-foreground">메모 · 관찰</summary>
         {/* 관찰값 */}
         {hasObservationFields(task.task_type, observationOverrides) && (
           <div className="space-y-1 md:col-span-2">
@@ -468,21 +467,20 @@ export function BlockTaskDetails({
             </span>
           </div>
         )}
-      </div>
 
-      {/* 체크리스트 */}
-      <label className="block space-y-1">
-        <span className="label-caps text-[11px] text-muted-foreground">메모</span>
-        <textarea
-          key={`note-${k}`}
-          className="min-h-16 w-full border border-border bg-background p-2 text-xs"
-          defaultValue={task.note ?? ""}
-          onBlur={(e) => {
-            if ((e.target.value.trim() || null) !== task.note)
-              void update({ note: e.target.value.trim() || null }, "메모");
-          }}
-        />
-      </label>
+        <label className="block space-y-1">
+          <span className="label-caps text-[11px] text-muted-foreground">메모</span>
+          <textarea
+            key={`note-${k}`}
+            className="min-h-16 w-full border border-border bg-background p-2 text-xs"
+            defaultValue={task.note ?? ""}
+            onBlur={(e) => {
+              if ((e.target.value.trim() || null) !== task.note)
+                void update({ note: e.target.value.trim() || null }, "메모");
+            }}
+          />
+        </label>
+      </details>
       {checklist.length > 0 && (
         <div className="flex flex-col gap-1">
           {checklist.map((item, idx) => (
@@ -533,15 +531,11 @@ export function BlockTimerChip({
   block,
   row,
   onStarted,
-  onRetime,
   part,
 }: {
   block: WorkBlock;
   row: DashboardComponentRow;
   onStarted?: (sessionId: string, iso: string) => void | Promise<void>;
-  onRetime?:
-    | ((block: WorkBlock, startIso: string | null, endIso?: string) => void | Promise<void>)
-    | undefined;
   /** timer: 블록 첫 줄의 타이머 / note: 블록 아래쪽의 메모 한 줄 */
   part: "timer" | "note";
 }) {
@@ -551,6 +545,7 @@ export function BlockTimerChip({
   const task = (tasks.data ?? []).find((t) => t.id === block.work_session_task_id);
   const timers = task ? readTimers(task) : [];
   const running = task?.status === "IN_PROGRESS";
+  const [timerError, setTimerError] = useState<string | null>(null);
   const now = useTick(timers.some((t) => t.started_at && !t.done_at));
   if (!task) return null;
 
@@ -559,11 +554,14 @@ export function BlockTimerChip({
     await queryClient.invalidateQueries({ queryKey: ["work_blocks"] });
   };
   const patchTimer = async (id: string, patch: Partial<TaskTimer>) => {
-    await saveTimers(
+    const error = await saveTimers(
       task,
       timers.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+      true,
     );
+    setTimerError(error?.message ?? null);
     await refresh();
+    return !error;
   };
   const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
   const chipButton =
@@ -581,6 +579,11 @@ export function BlockTimerChip({
 
   return (
     <>
+      {timerError && (
+        <span role="alert" className="text-xs">
+          {timerError}
+        </span>
+      )}
       {timers.map((t, idx) => {
         // 타이머마다 "1. 머랭휘핑: 13분" / "2. Oven: 진행중 0:23" 형식으로 이름과 시간을 함께 표기한다.
         const tag = timers.length > 1 ? `${idx + 1}.` : "";
@@ -604,14 +607,7 @@ export function BlockTimerChip({
                 onClick={(e) => {
                   e.stopPropagation();
                   const endIso = new Date().toISOString();
-                  void (async () => {
-                    await patchTimer(t.id, { done_at: endIso });
-                    // 마지막으로 돌던 타이머가 끝나면 블록 종료도 그 시각으로 맞춘다.
-                    const othersRunning = timers.some(
-                      (x) => x.id !== t.id && x.started_at && !x.done_at,
-                    );
-                    if (!othersRunning) await onRetime?.(block, task.actual_started_at, endIso);
-                  })();
+                  void patchTimer(t.id, { done_at: endIso });
                 }}
               >
                 ■
@@ -643,20 +639,8 @@ export function BlockTimerChip({
             onClick={async (e) => {
               e.stopPropagation();
               const iso = new Date().toISOString();
-              const othersRunning = timers.some((x) => x.id !== t.id && x.started_at && !x.done_at);
-              await patchTimer(t.id, { started_at: iso, done_at: null });
-              // 다른 타이머가 안 돌고 있으면 시작 버튼이 곧 새 시작 — 수기로 고친 Start/End를 리셋한다.
-              if (!othersRunning) {
-                const userId = await currentUserId();
-                await supabase
-                  .from("work_session_tasks")
-                  .update({ status: "IN_PROGRESS", actual_started_at: iso, completed_at: null })
-                  .eq("id", task.id)
-                  .eq("user_id", userId);
-                await refresh();
+              if (await patchTimer(t.id, { started_at: iso, done_at: null }))
                 await onStarted?.(sessionId, iso);
-                await onRetime?.(block, iso);
-              }
             }}
           >
             {tag}
@@ -681,7 +665,6 @@ export function BlockTimerChip({
               .eq("id", task.id)
               .eq("user_id", userId);
             await refresh();
-            await onRetime?.(block, task.actual_started_at, endIso);
             // 완료를 플래너 TASK에도 반영(best-effort).
             void syncWorkSessionToPlanner(sessionId);
           }}

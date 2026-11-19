@@ -1,4 +1,2 @@
 # Tests that already fail on main (2026-11-17). CI fails only on failures NOT listed here.
 # Remove a line when the test is fixed. Never add a line to make a new failure pass.
-positive integer entry, blank demand, zero demand, and legacy merge allocations
-legacy popups receive display defaults without rewriting IDs or completion
