@@ -15,7 +15,6 @@ import {
   workBlocksQuery,
   type WorkSessionFormulaVersionRow,
 } from "@/lib/queries";
-import { openEditorOnMount } from "@/lib/open-editor-on-mount";
 import { parseComponentPlan, productionDemandSummary } from "@/lib/order-component-plan";
 import { resolveSlotGroup } from "@/lib/technique";
 import { sumBaseGrams } from "@/lib/work-session";
@@ -57,9 +56,8 @@ export function OrderComponentPlanRow({
 }) {
   const client = useQueryClient();
   const [draft, setDraft] = useState(() => fromRow(row));
-  // 평소엔 저장된 계획을 텍스트 요약으로만 보여주고, "생산 계획 수정"을 눌러야 입력칸이 열린다(2026-11-09).
-  // 방금 "컴포넌트 추가"로 만든 행은 입력 방식 설정이 바로 열린 채로 시작한다.
-  const [editing, setEditing] = useState(() => openEditorOnMount.delete(row.id));
+  // Orders: editing the plan must not require a separate "edit" click.
+  const [editing, setEditing] = useState(true);
   const baseline = useRef({ draft: fromRow(row), updatedAt: row.updated_at });
   const dirty = JSON.stringify(draft) !== JSON.stringify(baseline.current.draft);
   const conflict = row.updated_at !== baseline.current.updatedAt && dirty;
@@ -674,7 +672,7 @@ export function OrderComponentPlanRow({
           {ingredients.isSuccess && preview && (
             <p className="font-mono text-[11px]">
               기본 {fmtNumber(base, 0)}g × {fmtNumber(effectiveMultiplierAll, 4)} = 생산{" "}
-              {fmtNumber(preview.production)}g
+              {fmtNumber(preview.production, 0)}g
             </p>
           )}
           {lockedSched ? (
