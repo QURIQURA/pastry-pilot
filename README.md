@@ -43,7 +43,7 @@ Supabase(KORA Business)는 연결 상태만 유지하고, 테이블 생성은 �
 
 This project was built with [Lovable](https://lovable.dev).
 
-**Live app**: https://kora-pilot.lovable.app
+**Live app**: https://productionpilot.lovable.app
 
 ## Build with Lovable
 
