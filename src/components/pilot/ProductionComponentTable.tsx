@@ -235,7 +235,7 @@ function ComponentRow({
   });
   const reopen = useMutation({
     mutationFn: () => reopenComponentForProduction(row),
-    onSuccess: () => toast.success("작업 대기공간으로 되돌렸어요"),
+    onSuccess: () => toast.success("다시 생산할 수 있게 일정을 비웠어요"),
     onError: (error) => toast.error(error.message),
     onSettled: () => invalidateProductionSync(client),
   });
