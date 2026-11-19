@@ -1196,15 +1196,12 @@ function WeighingView({
                 const baseM = col.baseMouldId ? mouldById.get(col.baseMouldId) : null;
                 const qty =
                   col.mouldQty ?? (m && baseM ? mouldQty(col.multiplier, baseM, m) : null);
-                // R&D 실험은 레시피 양을 직접 바꾸므로 몰드 기준중량이 아니라 아래 TOTAL을 몰드 개수로 나눈 실제 중량을 쓴다.
-                const isRnd = rndVersionIds.has(col.formulaVersionId);
-                const rndTotal = totalsByColumn[col.selectionId] ?? 0;
-                const refG =
-                  isRnd && qty != null && qty > 0 && rndTotal > 0
-                    ? rndTotal / qty
-                    : m?.reference_weight_g != null
-                      ? Number(m.reference_weight_g)
-                      : null;
+                // Use actual batter total, not the nominal mould capacity.
+                const actualTotal = totalsByColumn[col.selectionId] ?? 0;
+                const perMouldG =
+                  qty != null && qty > 0 && actualTotal > 0
+                    ? actualTotal / qty
+                    : null;
                 return (
                   <td
                     key={col.selectionId}
@@ -1213,11 +1210,10 @@ function WeighingView({
                     {m ? (
                       <>
                         {mouldAbbr(m)}
-                        {refG != null && ` (${fmtNumber(refG, 0)}g)`}
-                        {qty != null && ` ×${fmtNumber(qty, 2)}`}
-                        {refG != null && qty != null && (
+                        {qty != null && ` ×${fmtNumber(qty, 0)}`}
+                        {perMouldG != null && (
                           <span className="block text-[10px]">
-                            ≈ {fmtNumber(refG * qty, 0)}g{isRnd ? " (R&D 실제)" : ""}
+                            1개당 {fmtNumber(perMouldG, 0)}g · 전체 {fmtNumber(actualTotal, 0)}g
                           </span>
                         )}
                       </>
