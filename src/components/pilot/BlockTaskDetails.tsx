@@ -23,7 +23,13 @@ import {
 } from "@/lib/datetime";
 import { hasObservationFields, type ChecklistItem, type WorkSessionTask } from "@/lib/workflow";
 import { syncWorkSessionToPlanner } from "@/lib/work-session";
-import { newTimer, readTimers, timerElapsedSec, type TaskTimer } from "@/lib/task-timers";
+import {
+  newTimer,
+  readTimers,
+  taskTimerSummary,
+  timerElapsedSec,
+  type TaskTimer,
+} from "@/lib/task-timers";
 import { buttonClass, primaryButtonClass } from "@/components/pilot/ui";
 import { cn } from "@/lib/utils";
 
@@ -94,10 +100,8 @@ const numOrNull = (v: string) => (v.trim() ? Number(v) : null);
 /** 타이머 목록 저장 — 레거시 timer_minutes는 첫 타이머로 옮겨졌으므로 비운다. */
 async function saveTimers(task: WorkSessionTask, timers: TaskTimer[], updateSummary = false) {
   const userId = await currentUserId();
-  const running = timers.filter((timer) => timer.started_at && !timer.done_at);
-  if (running.length > 1) return { message: "이 작업에서 이미 타이머가 실행 중이에요." };
-  const starts = timers.flatMap((timer) => (timer.started_at ? [timer.started_at] : [])).sort();
-  const finishes = timers.flatMap((timer) => (timer.done_at ? [timer.done_at] : [])).sort();
+  const { runningCount, ...summary } = taskTimerSummary(timers);
+  if (runningCount > 1) return { message: "이 작업에서 이미 타이머가 실행 중이에요." };
   const { data, error } = await supabase
     .from("work_session_tasks")
     .update({
@@ -107,9 +111,8 @@ async function saveTimers(task: WorkSessionTask, timers: TaskTimer[], updateSumm
       })) as never,
       timer_minutes: null,
       ...(updateSummary && {
-        actual_started_at: starts[0] ?? null,
-        completed_at: running.length ? null : (finishes.at(-1) ?? null),
-        ...(running.length && { status: "IN_PROGRESS" as const }),
+        ...summary,
+        ...(runningCount > 0 && { status: "IN_PROGRESS" as const }),
       }),
     })
     .eq("id", task.id)

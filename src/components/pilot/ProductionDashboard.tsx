@@ -45,7 +45,7 @@ import {
   type DashboardComponentRow,
   type WorkBlock,
 } from "@/lib/queries";
-import { addDays, formatDelivery, koreanWeekdayShort, toLocalDateString } from "@/lib/datetime";
+import { addDays, formatDelivery, koreanWeekdayShort, nowLocalTime, toLocalDateString } from "@/lib/datetime";
 import {
   removeDailyTask,
   syncDailyTaskToPlanner,
@@ -86,10 +86,7 @@ const ORDER_PALETTE = [
   { bg: "#EEE9D2", accent: "#B5A242", text: "#5A4E12" },
 ];
 
-const nowMin = (): number => {
-  const d = new Date();
-  return d.getHours() * 60 + d.getMinutes();
-};
+const nowMin = () => toMin(nowLocalTime());
 
 function toMin(t: string): number {
   const [h, m] = t.split(":");
@@ -161,10 +158,7 @@ export function ProductionDashboard() {
   const queryClient = useQueryClient();
   const components = useQuery(dashboardComponentsQuery());
   const blocksQuery = useQuery(workBlocksQuery());
-  const todayStr = (() => {
-    const n = new Date();
-    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
-  })();
+  const todayStr = toLocalDateString();
   const doneTaskIds = useQuery(doneTaskIdsQuery());
   const [date, setDate] = useState(() => toLocalDateString());
   const [selectedId, setSelectedId] = useState<string | null>(null);

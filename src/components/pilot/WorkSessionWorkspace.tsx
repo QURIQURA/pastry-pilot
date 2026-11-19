@@ -1199,6 +1199,7 @@ function WeighingView({
                   key={group.ingredientId}
                   group={group}
                   columns={displayColumns}
+                  gramsByColumn={gramsByColumn}
                   height={rowHeights[group.ingredientId] ?? DEFAULT_MATRIX_ROW_HEIGHT}
                   sessionId={sessionId}
                   onResizeStart={(clientY) => startRowResize(group.ingredientId, clientY)}
