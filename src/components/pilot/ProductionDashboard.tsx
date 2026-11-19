@@ -254,7 +254,7 @@ export function ProductionDashboard() {
     return [...groups.values()].sort((a, b) =>
       a.order.order_number.localeCompare(b.order.order_number),
     );
-  }, [rows, blocksByRow, doneTaskIds.data, todayStr]);
+  }, [rows, blocksByRow]);
   // 일정(블록 종료 시각)이 이미 지났는데 TASK가 완료되지 않은 컴포넌트 — 알림 표시 대상.
   const overdueIds = useMemo(() => {
     const ids = new Set<string>();
@@ -286,10 +286,7 @@ export function ProductionDashboard() {
     },
     onError: (e) => setWarning((e as Error).message),
   });
-  const poolCount = poolGroups.reduce(
-    (n, g) => n + g.rows.length,
-    0,
-  );
+  const poolCount = poolGroups.reduce((n, g) => n + g.rows.length, 0);
   const mouldById = useMemo(
     () => new Map((mouldsData.data ?? []).map((m) => [m.id, m])),
     [mouldsData.data],
@@ -1045,7 +1042,7 @@ export function ProductionDashboard() {
             <p className="font-mono text-xs uppercase text-muted-foreground">LOADING…</p>
           ) : poolGroups.length === 0 ? (
             <p className="font-mono text-xs text-muted-foreground">
-              시간 배정 전인 컴포넌트가 없어요. ORDERS 탭에서 오더에 컴포넌트를 지정하면 여기에
+              미배정 컴포넌트가 없어요. ORDERS 탭에서 오더에 컴포넌트를 지정하면 여기에
               쌓여요.
             </p>
           ) : (
