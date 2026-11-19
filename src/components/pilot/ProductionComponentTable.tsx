@@ -422,8 +422,24 @@ function ComponentRow({
                       );
                     }}
                   />
-                  {other.order.order_number}
-                  {other.order.customerName ? ` · ${other.order.customerName}` : ""}
+                  <span className="font-medium">{other.order.order_number}</span>
+                  <span className="text-muted-foreground">
+                    {" · "}
+                    {(() => {
+                      const candidateMould = moulds.data?.find((item) => item.id === other.mouldId);
+                      const candidateCount = Number(other.mouldQty ?? 0);
+                      const candidateGrams = mouldBatchGrams(
+                        sumBaseGrams(ingredients.data ?? []) * Number(other.multiplier),
+                        candidateMould ? candidateCount : 0,
+                        candidateMould?.reference_weight_g,
+                      );
+                      return [
+                        candidateMould ? mouldAbbr(candidateMould) : "몰드 미지정",
+                        candidateCount > 0 ? `× ${candidateCount}개` : "수량 미지정",
+                        ingredients.isSuccess ? `${fmtNumber(candidateGrams, 0)}g` : "중량 조회 중",
+                      ].join(" · ");
+                    })()}
+                  </span>
                 </label>
               ))}
               <div className="flex flex-wrap gap-1">
