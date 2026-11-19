@@ -49,10 +49,14 @@ export function OrderComponentPlanRow({
   row,
   disabled = false,
   allowFormulaChange = false,
+  section,
+  onClose,
 }: {
   row: WorkSessionFormulaVersionRow;
   disabled?: boolean;
   allowFormulaChange?: boolean;
+  section?: "schedule" | "mould";
+  onClose?: () => void;
 }) {
   const client = useQueryClient();
   const [draft, setDraft] = useState(() => fromRow(row));
@@ -88,41 +92,74 @@ export function OrderComponentPlanRow({
         }
       : { date: row.planned_date ?? "", start: "", dur: "60" };
   const [sched, setSched] = useState(schedFrom);
+  const scheduleRevision = oneBlock
+    ? `${oneBlock.id}:${oneBlock.block_date}:${oneBlock.start_time}:${oneBlock.end_time}`
+    : (row.planned_date ?? "");
   const schedBase = useRef(JSON.stringify(sched));
+  const schedRevision = useRef(scheduleRevision);
   useEffect(() => {
     if (JSON.stringify(sched) === schedBase.current) {
       const n = schedFrom();
       schedBase.current = JSON.stringify(n);
+      schedRevision.current = scheduleRevision;
       setSched(n);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [oneBlock?.id, oneBlock?.block_date, oneBlock?.start_time, oneBlock?.end_time, row.planned_date]);
+  }, [
+    oneBlock?.id,
+    oneBlock?.block_date,
+    oneBlock?.start_time,
+    oneBlock?.end_time,
+    row.planned_date,
+  ]);
   const schedDirty = JSON.stringify(sched) !== schedBase.current;
+  const scheduleConflict = schedDirty && schedRevision.current !== scheduleRevision;
   const saveSched = useMutation({
     mutationFn: async () => {
+      if (lockedSched || scheduleConflict)
+        throw new Error("일정이 변경됐어요. 최신 일정을 확인해 주세요.");
       if (!sched.start) {
         if (oneBlock?.work_session_task_id) {
           const { data: task, error } = await supabase
             .from("work_session_tasks")
-            .select("status,actual_started_at,completed_at,timers,note,batter_height_mm,observation_status,observation_height_start_mm,observation_height_mid_mm,observation_height_end_mm,observation_temperature_c")
+            .select(
+              "status,actual_started_at,completed_at,timers,note,batter_height_mm,observation_status,observation_height_start_mm,observation_height_mid_mm,observation_height_end_mm,observation_temperature_c",
+            )
             .eq("id", oneBlock.work_session_task_id)
             .single();
           if (error) throw error;
-          if (task.status !== "NOT_STARTED" || task.actual_started_at || task.completed_at ||
-              task.note || task.batter_height_mm != null || task.observation_status ||
-              task.observation_height_start_mm != null || task.observation_height_mid_mm != null ||
-              task.observation_height_end_mm != null || task.observation_temperature_c != null ||
-              (Array.isArray(task.timers) && task.timers.some((timer) =>
-                timer && typeof timer === "object" && !Array.isArray(timer) &&
-                (timer["started_at"] || timer["done_at"])))) {
+          if (
+            task.status !== "NOT_STARTED" ||
+            task.actual_started_at ||
+            task.completed_at ||
+            task.note ||
+            task.batter_height_mm != null ||
+            task.observation_status ||
+            task.observation_height_start_mm != null ||
+            task.observation_height_mid_mm != null ||
+            task.observation_height_end_mm != null ||
+            task.observation_temperature_c != null ||
+            (Array.isArray(task.timers) &&
+              task.timers.some(
+                (timer) =>
+                  timer &&
+                  typeof timer === "object" &&
+                  !Array.isArray(timer) &&
+                  (timer["started_at"] || timer["done_at"]),
+              ))
+          ) {
             throw new Error("작업 기록이 있는 시간 블록은 기존 기록을 보존하기 위해 유지합니다.");
           }
         }
-        const { error } = await supabase.from("work_session_formula_versions")
-          .update({ planned_date: sched.date || null }).eq("id", row.id);
+        const { error } = await supabase
+          .from("work_session_formula_versions")
+          .update({ planned_date: sched.date || null })
+          .eq("id", row.id);
         if (error) throw error;
         if (oneBlock) {
-          const removed = await syncWorkSessionToPlanner(row.work_session_id, { removeBlockId: oneBlock.id });
+          const removed = await syncWorkSessionToPlanner(row.work_session_id, {
+            removeBlockId: oneBlock.id,
+          });
           if (removed) throw new Error(removed);
         }
         return;
@@ -160,8 +197,10 @@ export function OrderComponentPlanRow({
         });
         if (error) throw error;
       }
-      const { error: planError } = await supabase.from("work_session_formula_versions")
-        .update({ planned_date: null }).eq("id", row.id);
+      const { error: planError } = await supabase
+        .from("work_session_formula_versions")
+        .update({ planned_date: null })
+        .eq("id", row.id);
       if (planError) throw planError;
       await syncWorkSessionToPlanner(row.work_session_id);
     },
@@ -169,7 +208,9 @@ export function OrderComponentPlanRow({
       schedBase.current = JSON.stringify(sched);
       await client.invalidateQueries({ queryKey: ["work_blocks"] });
       await client.invalidateQueries({ queryKey: ["dashboard_components"] });
-      await client.invalidateQueries({ queryKey: ["work_session_formula_versions", row.work_session_id] });
+      await client.invalidateQueries({
+        queryKey: ["work_session_formula_versions", row.work_session_id],
+      });
     },
   });
   const formulas = useQuery({ ...formulasQuery(), enabled: allowFormulaChange });
@@ -210,28 +251,28 @@ export function OrderComponentPlanRow({
     row.formula_versions.default_mould_id;
   const baseMould = (moulds.data ?? []).find((m) => m.id === defaultMouldId);
   const targetMould = (moulds.data ?? []).find((m) => m.id === draft.mould);
-  const mouldMode = Boolean(baseMould?.reference_weight_g);
+  const mouldMode = section === "mould" || Boolean(baseMould?.reference_weight_g);
   const derivedQty = targetMould ? (mouldQtyForRecipe(row.multiplier, base, targetMould) ?? 1) : 1;
   const qtyText = draft.qty !== "" ? draft.qty : String(derivedQty);
   const autoMode = draft.mould ? "MOULD" : draft.bw ? "BASE" : draft.ing ? "ING" : "MULT";
-  const mode = draft.mode || autoMode;
+  const mode = section === "mould" ? "MOULD" : draft.mode || autoMode;
   const useMould = mode === "MOULD" && mouldMode && Boolean(targetMould?.reference_weight_g);
   const scalingChanged =
     draft.version !== row.formula_version_id ||
     draft.mould !== (row.mould_id ?? "") ||
     draft.qty !== (row.mould_qty == null ? "" : String(row.mould_qty)) ||
     draft.mode === "MOULD";
-  const effectiveMultiplier = useMould && scalingChanged
-    ? (mouldMultiplierForRecipe(Number(qtyText), base, targetMould) ?? Number.NaN)
-    : Number(draft.multiplier);
+  const effectiveMultiplier =
+    useMould && scalingChanged
+      ? (mouldMultiplierForRecipe(Number(qtyText), base, targetMould) ?? Number.NaN)
+      : Number(draft.multiplier);
   // 기준중량 기준(가나슈/크림/필링 등 몰드 없는 컴포넌트): 설정의 기준중량 × 개수 = 목표 중량 → 배수 자동 계산.
   const baseWeights = useQuery(baseWeightsQuery());
   const bwPreset = (baseWeights.data ?? []).find((b) => b.id === draft.bw);
   const useBase = mode === "BASE" && !mouldMode && Boolean(bwPreset?.weight_g) && base > 0;
   const bwQtyNum = Number(draft.bwQty);
   const bwTargetG = useBase && bwQtyNum > 0 ? Number(bwPreset!.weight_g) * bwQtyNum : null;
-  const bwMultiplier =
-    bwTargetG != null ? bwTargetG / base : Number.NaN;
+  const bwMultiplier = bwTargetG != null ? bwTargetG / base : Number.NaN;
   // 저장된 목표 중량이 어떤 기준중량의 정수배면 그 프리셋을 처음부터 선택해 보여준다.
   useEffect(() => {
     if (
@@ -420,6 +461,157 @@ export function OrderComponentPlanRow({
     planText = `기준중량 기준 — ${bwPreset.name} ×${fmtNumber(bwQtyNum, 2)} = 목표 ${bwTargetG != null ? fmtNumber(bwTargetG) : "?"}g → 레시피 ×${fmtNumber(bwMultiplier, 4)}`;
   else
     planText = `배수 직접 입력 — 레시피 ×${fmtNumber(Number(draft.multiplier) || row.multiplier, 4)}`;
+  const mouldInputs = (
+    <div className="grid grid-cols-[1fr_5rem] gap-2">
+      <label className="text-[11px]">
+        생산 몰드
+        <select
+          aria-label="생산 몰드"
+          className={selectClass}
+          value={draft.mould}
+          onChange={(e) =>
+            setDraft((d) => ({
+              ...d,
+              mould: e.target.value,
+              qty: d.mould ? qtyText : "1",
+            }))
+          }
+        >
+          <option value="">몰드 선택…</option>
+          {(moulds.data ?? []).map((m) => (
+            <option key={m.id} value={m.id} disabled={!m.reference_weight_g}>
+              {mouldAbbr(m)}
+              {m.reference_weight_g
+                ? ` · ${fmtNumber(Number(m.reference_weight_g))}g`
+                : " · 기준중량 없음"}
+            </option>
+          ))}
+        </select>
+      </label>
+      {useMould && (
+        <label className="text-[11px]">
+          개수
+          <input
+            aria-label="생산 몰드 개수"
+            type="number"
+            min="0"
+            step="any"
+            className={inputClass}
+            value={qtyText}
+            onChange={(e) => setDraft((d) => ({ ...d, qty: e.target.value }))}
+          />
+        </label>
+      )}
+    </div>
+  );
+  const scheduleInputs = lockedSched ? (
+    <p className="text-[11px] text-muted-foreground">
+      이 컴포넌트는 이미 여러 조각(분할/단계)으로 배정돼 있어요 — DASHBOARD 타임라인에서 시간을
+      고치세요.
+    </p>
+  ) : (
+    <div className="space-y-1 border border-dashed border-border p-2">
+      <p className="label-caps text-muted-foreground">
+        날짜 · 시간 배정 {oneBlock ? "(타임라인에 배정됨)" : "(비우면 작업 대기공간에 둠)"}
+      </p>
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="text-[11px]">
+          날짜
+          <input
+            type="date"
+            aria-label="작업 날짜"
+            className={inputClass}
+            value={sched.date}
+            onChange={(e) =>
+              setSched((v) => ({
+                ...v,
+                date: e.target.value,
+                start: e.target.value ? v.start : "",
+              }))
+            }
+          />
+        </label>
+        <label className="text-[11px]">
+          시작
+          <input
+            type="time"
+            step={60}
+            aria-label="작업 시작 시각"
+            className={inputClass}
+            value={sched.start}
+            onChange={(e) => setSched((v) => ({ ...v, start: e.target.value }))}
+          />
+        </label>
+        <label className="text-[11px]">
+          길이(분)
+          <input
+            type="number"
+            min={15}
+            step={15}
+            aria-label="작업 시간(분)"
+            className={`${inputClass} w-20`}
+            value={sched.dur}
+            onChange={(e) => setSched((v) => ({ ...v, dur: e.target.value }))}
+          />
+        </label>
+      </div>
+    </div>
+  );
+
+  if (section) {
+    const scheduling = section === "schedule";
+    const pending = scheduling ? saveSched.isPending : save.isPending;
+    const canSave = scheduling
+      ? schedDirty && !lockedSched && !scheduleConflict && blocksQ.isSuccess
+      : dirty &&
+        !conflict &&
+        useMould &&
+        ingredients.isSuccess &&
+        Number.isFinite(effectiveMultiplier) &&
+        effectiveMultiplier > 0;
+    const error = scheduling
+      ? (saveSched.error?.message ??
+        (scheduleConflict
+          ? "다른 화면에서 일정이 변경됐어요. 닫고 다시 열어 주세요."
+          : blocksQ.isError
+            ? "일정을 불러오지 못했습니다."
+            : null))
+      : (save.error?.message ??
+        (conflict
+          ? "다른 화면에서 계획이 변경됐어요. 닫고 다시 열어 주세요."
+          : moulds.isError || ingredients.isError
+            ? "몰드 또는 배합을 불러오지 못했습니다."
+            : null));
+    return (
+      <form
+        className="min-w-0 space-y-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!canSave || pending || disabled) return;
+          if (scheduling) saveSched.mutate(undefined, { onSuccess: () => onClose?.() });
+          else save.mutate(undefined, { onSuccess: () => onClose?.() });
+        }}
+      >
+        <fieldset disabled={pending || disabled} className="min-w-0 space-y-2">
+          {scheduling ? scheduleInputs : mouldInputs}
+          <div className="flex flex-wrap gap-1">
+            <button type="submit" className={buttonClass} disabled={!canSave}>
+              {pending ? "저장 중…" : "저장"}
+            </button>
+            <button type="button" className={buttonClass} onClick={onClose}>
+              닫기
+            </button>
+          </div>
+        </fieldset>
+        {error && (
+          <p role="alert" className="text-xs text-destructive">
+            {error}
+          </p>
+        )}
+      </form>
+    );
+  }
+
   return (
     <div className="mt-1 space-y-1.5">
       <div className="flex items-start justify-between gap-2">
@@ -433,7 +625,9 @@ export function OrderComponentPlanRow({
               {productionText}
               {oneBlock
                 ? ` · ${oneBlock.block_date} ${hhmm(oneBlock.start_time)}–${hhmm(oneBlock.end_time)} 타임라인`
-                : row.planned_date ? ` · ${row.planned_date} 날짜 계획` : ""}
+                : row.planned_date
+                  ? ` · ${row.planned_date} 날짜 계획`
+                  : ""}
             </p>
           )}
         </div>
@@ -547,47 +741,7 @@ export function OrderComponentPlanRow({
                   레시피 기본 몰드: {baseMould ? mouldAbbr(baseMould) : "—"} (
                   {fmtNumber(Number(baseMould?.reference_weight_g ?? 0))}g)
                 </p>
-                <div className="grid grid-cols-[1fr_5rem] gap-2">
-                  <label className="text-[11px]">
-                    생산 몰드
-                    <select
-                      aria-label="생산 몰드"
-                      className={selectClass}
-                      value={draft.mould}
-                      onChange={(e) =>
-                        setDraft((d) => ({
-                          ...d,
-                          mould: e.target.value,
-                          qty: d.mould ? qtyText : "1",
-                        }))
-                      }
-                    >
-                      <option value="">몰드 선택…</option>
-                      {(moulds.data ?? []).map((m) => (
-                        <option key={m.id} value={m.id} disabled={!m.reference_weight_g}>
-                          {mouldAbbr(m)}
-                          {m.reference_weight_g
-                            ? ` · ${fmtNumber(Number(m.reference_weight_g))}g`
-                            : " · 기준중량 없음"}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  {useMould && (
-                    <label className="text-[11px]">
-                      개수
-                      <input
-                        aria-label="생산 몰드 개수"
-                        type="number"
-                        min="0"
-                        step="any"
-                        className={inputClass}
-                        value={qtyText}
-                        onChange={(e) => setDraft((d) => ({ ...d, qty: e.target.value }))}
-                      />
-                    </label>
-                  )}
-                </div>
+                {mouldInputs}
                 {useMould && (
                   <p className="font-mono text-[11px]">
                     {mouldAbbr(targetMould!)} ×{fmtNumber(Number(qtyText), 2)} = 레시피(
@@ -712,53 +866,7 @@ export function OrderComponentPlanRow({
               {fmtNumber(preview.production, 0)}g
             </p>
           )}
-          {lockedSched ? (
-            <p className="text-[11px] text-muted-foreground">
-              이 컴포넌트는 이미 여러 조각(분할/단계)으로 배정돼 있어요 — DASHBOARD 타임라인에서
-              시간을 고치세요.
-            </p>
-          ) : (
-            <div className="space-y-1 border border-dashed border-border p-2">
-              <p className="label-caps text-muted-foreground">
-                날짜 · 시간 배정 {oneBlock ? "(타임라인에 배정됨)" : "(비우면 작업 대기공간에 둠)"}
-              </p>
-              <div className="flex flex-wrap items-end gap-2">
-                <label className="text-[11px]">
-                  날짜
-                  <input
-                    type="date"
-                    aria-label="작업 날짜"
-                    className={inputClass}
-                    value={sched.date}
-                    onChange={(e) => setSched((v) => ({ ...v, date: e.target.value, start: e.target.value ? v.start : "" }))}
-                  />
-                </label>
-                <label className="text-[11px]">
-                  시작
-                  <input
-                    type="time"
-                    step={300}
-                    aria-label="작업 시작 시각"
-                    className={inputClass}
-                    value={sched.start}
-                    onChange={(e) => setSched((v) => ({ ...v, start: e.target.value }))}
-                  />
-                </label>
-                <label className="text-[11px]">
-                  길이(분)
-                  <input
-                    type="number"
-                    min={15}
-                    step={15}
-                    aria-label="작업 시간(분)"
-                    className={`${inputClass} w-20`}
-                    value={sched.dur}
-                    onChange={(e) => setSched((v) => ({ ...v, dur: e.target.value }))}
-                  />
-                </label>
-              </div>
-            </div>
-          )}
+          {scheduleInputs}
           <button
             type="button"
             className={buttonClass}
