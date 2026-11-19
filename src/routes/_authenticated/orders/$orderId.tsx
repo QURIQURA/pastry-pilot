@@ -506,14 +506,9 @@ function OrderDetailPage() {
         productId !== (previous?.product_id ?? "") ||
         productSizeId !== (previous?.product_size_id ?? "") ||
         cakeSizeId !== (previous?.cake_size_id ?? "");
-      const trimmedOrderNumber = orderNumber.trim();
-      if (!trimmedOrderNumber) {
-        throw new Error("ORDER NUMBER IS REQUIRED");
-      }
       const { error } = await supabase
         .from("orders")
         .update({
-          order_number: trimmedOrderNumber,
           customer_id: customerId || null,
           recipient: recipient.trim() || null,
           recipient_relationship: recipientRelationship || null,
@@ -722,8 +717,9 @@ function OrderDetailPage() {
           <input
             className="label-caps w-full max-w-[16rem] border-0 bg-transparent p-0 text-lg text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
             value={orderNumber}
-            onChange={(e) => setOrderNumber(e.target.value)}
-            aria-label="ORDER NUMBER"
+            readOnly
+            title="SH is an immutable database-assigned order number"
+            aria-label="MASTER SH ORDER NUMBER"
           />
           <p className="font-mono text-xs uppercase text-muted-foreground">
             CREATED {formatDateTime(order.data.created_at)}
