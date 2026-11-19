@@ -155,15 +155,11 @@ export function TimelineSettingsPanel({
         </div>
       </fieldset>
       {showPlanner && segments && segments.length > 0 && (
-        <div className="space-y-0.5">
-          <p className="label-caps text-[11px] text-muted-foreground">Planner 이날 시간</p>
-          {segments.map((segment) => (
-            <p key={`${segment.start}-${segment.end}`} className="font-mono text-[11px]">
-              {segment.start}–{segment.end} · {STATE_LABEL[segment.state]}
-              {segment.label ? ` · ${segment.label}` : ""}
-            </p>
-          ))}
-        </div>
+        <PlannerDayBar
+          segments={segments}
+          range={range}
+          onPick={(segment) => onRange({ mode: "custom", start: segment.start, end: segment.end })}
+        />
       )}
       <div className="space-y-1.5 border-t border-border pt-2">
         <div className="flex flex-wrap items-center gap-2">
@@ -218,6 +214,77 @@ export function TimelineSettingsPanel({
             }}
           />
         </details>
+      </div>
+    </div>
+  );
+}
+
+const SEGMENT_STYLE: Record<AvailabilitySegment["state"], string> = {
+  available: "bg-[#A9B79B] text-[#1F2A17]",
+  check: "bg-[#E8DFA8] text-[#4A4316]",
+  unknown: "bg-[#E4E4E1] text-muted-foreground",
+  busy: "bg-[#BDBDB8] text-[#2E2E2E]",
+};
+
+const minutes = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
+
+/** Planner's day as one 24h bar. Clicking a block shows the timeline for exactly that time. */
+function PlannerDayBar({
+  segments,
+  range,
+  onPick,
+}: {
+  segments: AvailabilitySegment[];
+  range: TimelineRange;
+  onPick: (segment: AvailabilitySegment) => void;
+}) {
+  return (
+    <div className="space-y-1">
+      <p className="label-caps text-[11px] text-muted-foreground">
+        Planner 이날 시간 · 블록을 누르면 그 시간으로 타임라인을 보여요
+      </p>
+      <div className="relative flex justify-between font-mono text-[10px] text-muted-foreground">
+        {[0, 4, 8, 12, 16, 20, 24].map((hour) => (
+          <span key={hour}>{String(hour).padStart(2, "0")}:00</span>
+        ))}
+      </div>
+      <div className="relative h-9 bg-muted">
+        {segments.map((segment) => {
+          const from = minutes(segment.start);
+          const to = minutes(segment.end);
+          if (to <= from) return null;
+          const picked =
+            range.mode === "custom" && range.start === segment.start && range.end === segment.end;
+          const text = `${segment.label || STATE_LABEL[segment.state]} · ${segment.start}–${segment.end}`;
+          return (
+            <button
+              key={`${segment.start}-${segment.end}`}
+              type="button"
+              title={`${STATE_LABEL[segment.state]} · ${text}`}
+              aria-pressed={picked}
+              className={cn(
+                "absolute inset-y-0 truncate border-r border-background px-1 text-[11px]",
+                SEGMENT_STYLE[segment.state],
+                picked && "outline outline-2 -outline-offset-2 outline-foreground",
+              )}
+              style={{
+                left: `${(from * 100) / 1440}%`,
+                width: `${((to - from) * 100) / 1440}%`,
+              }}
+              onClick={() => onPick(segment)}
+            >
+              {text}
+            </button>
+          );
+        })}
+      </div>
+      <div className="flex flex-wrap gap-2 text-[10px] text-muted-foreground">
+        {(["available", "check", "busy", "unknown"] as const).map((state) => (
+          <span key={state} className="flex items-center gap-1">
+            <span className={cn("inline-block h-2.5 w-2.5", SEGMENT_STYLE[state])} />
+            {STATE_LABEL[state]}
+          </span>
+        ))}
       </div>
     </div>
   );
