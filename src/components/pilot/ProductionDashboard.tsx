@@ -302,11 +302,11 @@ export function ProductionDashboard() {
     if (m) parts.push(`${mouldAbbr(m)}${r.mouldQty ? ` ×${r.mouldQty}` : ""}`);
     const bw = r.baseWeightId ? baseWeightById.get(r.baseWeightId) : null;
     if (bw) parts.push(`${bw.name}${r.baseWeightQty ? ` ×${r.baseWeightQty}` : ""}`);
-    // 중량: 저장된 목표 중량이 없으면 몰드 기준중량 × 개수로 채운다.
-    const g =
-      r.targetQuantityG ||
-      (m?.reference_weight_g && r.mouldQty ? Number(m.reference_weight_g) * r.mouldQty : 0);
-    if (g) parts.push(`${Math.round(g)}g`);
+    // Never present nominal mould capacity as actual recipe production weight.
+    // The saved target is authoritative; otherwise show the multiplier without
+    // guessing grams from a reference mould's nominal fill weight.
+    if (r.targetQuantityG != null && r.targetQuantityG > 0)
+      parts.push(`${Math.round(r.targetQuantityG)}g`);
     if (r.multiplier && r.multiplier !== 1)
       parts.push(`배수 ×${Math.round(r.multiplier * 100) / 100}`);
     return parts.join(" · ");
