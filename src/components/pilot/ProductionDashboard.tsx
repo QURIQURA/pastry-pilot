@@ -243,21 +243,10 @@ export function ProductionDashboard() {
     >();
     for (const r of rows) {
       if (!isActive(r)) continue;
-      // 타임라인에 올라간 컴포넌트는 사라지지 않고 비활성으로 남긴다(다른 날짜에 배정된 것도 — 날짜 표기와 함께).
-      // 작업이 끝난(배정된 블록의 TASK가 전부 DONE) 컴포넌트는 대기공간에서 뺀다 — ORDERS 쪽에서 확인.
-      const rbAll = blocksByRow.get(r.id) ?? [];
-      if (
-        rbAll.length > 0 &&
-        doneTaskIds.data &&
-        rbAll.every(
-          (b) =>
-            b.work_session_task_id &&
-            doneTaskIds.data.has(b.work_session_task_id) &&
-            // 미래 날짜로 옮겨진 블록은 완료로 보지 않는다(옛 완료 기록 때문에 대기공간에서 사라지는 것 방지).
-            b.block_date <= todayStr,
-        )
-      )
-        continue;
+      // Only genuinely unscheduled components belong in the waiting pool.
+      // A component assigned on any date is already scheduled, even when
+      // its time block is in the past or on a different selected day.
+      if ((blocksByRow.get(r.id) ?? []).length > 0) continue;
       const g = groups.get(r.order.id) ?? { order: r.order, rows: [] };
       g.rows.push(r);
       groups.set(r.order.id, g);
@@ -270,18 +259,18 @@ export function ProductionDashboard() {
   const overdueIds = useMemo(() => {
     const ids = new Set<string>();
     if (!doneTaskIds.data) return ids;
-    for (const g of poolGroups)
-      for (const r of g.rows)
-        if (
-          (blocksByRow.get(r.id) ?? []).some(
-            (b) =>
-              isBlockPast(b) &&
-              !(b.work_session_task_id && doneTaskIds.data.has(b.work_session_task_id)),
-          )
+    for (const r of rows) {
+      if (!isActive(r)) continue;
+      if (
+        (blocksByRow.get(r.id) ?? []).some(
+          (b) =>
+            isBlockPast(b) &&
+            !(b.work_session_task_id && doneTaskIds.data.has(b.work_session_task_id)),
         )
-          ids.add(r.id);
+      ) ids.add(r.id);
+    }
     return ids;
-  }, [poolGroups, blocksByRow, doneTaskIds.data]);
+  }, [rows, blocksByRow, doneTaskIds.data]);
   const completeRows = useMutation({
     mutationFn: async (targets: DashboardComponentRow[]) => {
       for (const r of targets)
@@ -298,7 +287,7 @@ export function ProductionDashboard() {
     onError: (e) => setWarning((e as Error).message),
   });
   const poolCount = poolGroups.reduce(
-    (n, g) => n + g.rows.filter((r) => (blocksByRow.get(r.id) ?? []).length === 0).length,
+    (n, g) => n + g.rows.length,
     0,
   );
   const mouldById = useMemo(
@@ -1027,7 +1016,7 @@ export function ProductionDashboard() {
             <p className="label-caps text-xs">작업 대기공간</p>
             <p className="font-mono text-[11px] text-muted-foreground">
               {poolCount === 0
-                ? "시간 배정 전인 컴포넌트가 없어요"
+                ? "미배정 컴포넌트가 없어요"
                 : `${poolCount}개 대기 중 · 타임라인으로 끌어다 놓거나 ADD`}
               {" · 블록을 여기로 끌면 시간 배정 해제(데일리 태스크는 삭제)"}
             </p>
