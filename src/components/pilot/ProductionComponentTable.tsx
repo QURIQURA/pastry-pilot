@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { toast } from "sonner";
 import {
+  dashboardComponentsQuery,
   mouldsQuery,
   versionIngredientsQuery,
   workBlocksQuery,
@@ -22,6 +23,7 @@ import { invalidateProductionSync } from "@/lib/production-sync";
 import { slotBoxClass } from "@/lib/slot-color";
 import { cn } from "@/lib/utils";
 import { OrderComponentPlanRow } from "./OrderComponentPlanRow";
+import { useProductionMerge } from "./WorkSessionWorkspace";
 import { buttonClass, selectClass } from "./ui";
 
 export const productionOrderStatusClass = cn(selectClass, "w-32 bg-secondary text-xs uppercase");
@@ -57,6 +59,7 @@ export function ProductionOrderHeader({
 }
 
 type Selection = WorkSessionFormulaVersionRow;
+type Section = "schedule" | "mould" | "settings" | "merge";
 type Actual = { start: string | null; end: string | null; done: boolean };
 
 export function ProductionComponentTable({
@@ -81,8 +84,15 @@ export function ProductionComponentTable({
   const tasksById = new Map((tasks.data ?? []).map((task) => [task.id, task]));
   const [open, setOpen] = useState<{
     id: string;
-    section: "schedule" | "mould" | "settings";
+    section: Section;
   } | null>(null);
+  // Work day of every selection (earliest timed block, else the date-only plan) for batch merging.
+  const workDate = new Map<string, string>();
+  for (const block of blocks.data ?? []) {
+    const id = block.work_session_formula_version_id;
+    const current = workDate.get(id);
+    if (!current || block.block_date < current) workDate.set(id, block.block_date);
+  }
   const records = new Map<string, Actual>();
   const planned = new Map<string, string>();
   const rowIds = new Set(rows.map((row) => row.id));
@@ -172,6 +182,7 @@ export function ProductionComponentTable({
                   }
                   close={() => setOpen((current) => (current?.id === row.id ? null : current))}
                   warning={warning?.(row.id)}
+                  workDateOf={(id) => workDate.get(id)}
                 />
               ))}
             </tbody>
@@ -196,18 +207,41 @@ function ComponentRow({
   toggle,
   close,
   warning,
+  workDateOf,
 }: {
   row: Selection;
   actual: Actual | undefined;
   planned: string | null;
   readOnly: boolean;
   allowFormulaChange: boolean;
-  open: "schedule" | "mould" | "settings" | null;
+  open: Section | null;
   toggle: (section: NonNullable<typeof open>) => void;
   close: () => void;
   warning?: ReactNode;
+  workDateOf: (id: string) => string | undefined;
 }) {
   const client = useQueryClient();
+  const dashboard = useQuery(dashboardComponentsQuery());
+  const day = workDateOf(row.id) ?? row.planned_date ?? null;
+  const { batchBySelection, setBatch } = useProductionMerge(day ?? "unscheduled");
+  const [mergeDraft, setMergeDraft] = useState<string[]>([]);
+  const dashboardRows = dashboard.data ?? [];
+  const batch = batchBySelection.get(row.id);
+  const mergedWith = batch
+    ? dashboardRows.filter(
+        (other) => other.id !== row.id && batchBySelection.get(other.id) === batch,
+      )
+    : [];
+  const mergeCandidates = day
+    ? dashboardRows.filter(
+        (other) =>
+          other.id !== row.id &&
+          other.formulaVersionId === row.formula_version_id &&
+          (workDateOf(other.id) ?? other.plannedDate) === day &&
+          !["COMPLETED", "CANCELLED"].includes(other.order.status) &&
+          !batchBySelection.has(other.id),
+      )
+    : [];
   const ingredients = useQuery(versionIngredientsQuery(row.formula_version_id));
   const moulds = useQuery(mouldsQuery());
   const mould = moulds.data?.find((item) => item.id === row.mould_id);
@@ -261,6 +295,34 @@ function ComponentRow({
             <span className="min-w-0 font-medium">{name}</span>
             {warning}
           </div>
+          {mergedWith.length > 0 ? (
+            <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
+              <span>
+                ⇄ {mergedWith.map((other) => other.order.order_number).join(" + ")}와 병합 · {day}
+              </span>
+              {!readOnly && (
+                <button type="button" className="underline" onClick={() => setBatch([row.id])}>
+                  해제
+                </button>
+              )}
+            </div>
+          ) : (
+            !readOnly &&
+            !actual?.done &&
+            mergeCandidates.length > 0 && (
+              <button
+                type="button"
+                aria-expanded={open === "merge"}
+                className="mt-0.5 text-[11px] underline underline-offset-2"
+                onClick={() => {
+                  setMergeDraft([]);
+                  toggle("merge");
+                }}
+              >
+                ⇄ 같은 포뮬라 병합 ({mergeCandidates.length})
+              </button>
+            )
+          )}
         </td>
         <td>
           {canEditMould ? (
@@ -337,6 +399,54 @@ function ComponentRow({
         <tr>
           <td colSpan={5}>
             <OrderComponentPlanRow key={open} row={row} section={open} onClose={close} />
+          </td>
+        </tr>
+      )}
+      {open === "merge" && !readOnly && mergeCandidates.length > 0 && (
+        <tr>
+          <td colSpan={5}>
+            <div className="space-y-1.5 text-xs">
+              <p>
+                {day} 같은 날 만드는 {name}을(를) 한 번에 계량해요. 함께 만들 주문을 고르세요.
+              </p>
+              {mergeCandidates.map((other) => (
+                <label key={other.id} className="flex items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    checked={mergeDraft.includes(other.id)}
+                    onChange={(event) => {
+                      const checked = event.target.checked;
+                      setMergeDraft((previous) =>
+                        checked
+                          ? [...previous, other.id]
+                          : previous.filter((id) => id !== other.id),
+                      );
+                    }}
+                  />
+                  {other.order.order_number}
+                  {other.order.customerName ? ` · ${other.order.customerName}` : ""}
+                </label>
+              ))}
+              <div className="flex flex-wrap gap-1">
+                <button
+                  type="button"
+                  className={productionTableButtonClass}
+                  disabled={!mergeDraft.length}
+                  onClick={() => {
+                    setBatch([row.id, ...mergeDraft]);
+                    close();
+                  }}
+                >
+                  {mergeDraft.length + 1}건 병합
+                </button>
+                <button type="button" className={productionTableButtonClass} onClick={close}>
+                  닫기
+                </button>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                병합하면 DASHBOARD WORK VIEW에서 한 열로 계량하고, 주문별 몰드 배분은 그대로 남아요.
+              </p>
+            </div>
           </td>
         </tr>
       )}
