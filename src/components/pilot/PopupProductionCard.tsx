@@ -1,72 +1,79 @@
-import { popupStageLabel, readPopupStages } from "@/lib/popup-workflow";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { readPopupPlan } from "@/lib/popup";
 import { formatDateTime } from "@/lib/datetime";
 import {
-  pilotSettingsQuery,
+  CORE_SLOTS,
+  CORE_SLOT_LABELS,
+  type CoreSlot,
   workSessionFormulaVersionsQuery,
   workSessionQuery,
   type OrderListRow,
 } from "@/lib/queries";
 import { invalidateProductionSync } from "@/lib/production-sync";
 import { AddFormulaVersionForm } from "./WorkSessionWorkspace";
-import { OrderComponentPlanRow } from "./OrderComponentPlanRow";
-import { slotBoxClass } from "@/lib/slot-color";
-import { removePlannedComponent } from "@/lib/production-plan-actions";
-import { toast } from "sonner";
 import { addProductComponentsToSession } from "@/lib/product-session-components";
-import { buttonClass } from "./ui";
+import { cn } from "@/lib/utils";
+import {
+  ProductionComponentTable,
+  ProductionOrderHeader,
+  productionOrderStatusClass,
+  productionTableButtonClass,
+} from "./ProductionComponentTable";
 import { PopupOrderStageSelect } from "./PopupStageSelect";
 
 export function PopupProductionCard({ order }: { order: OrderListRow }) {
   const plan = readPopupPlan(order.popup_plan);
-  const settings = useQuery(pilotSettingsQuery());
   return (
     <section className="space-y-3 border border-border bg-card p-3">
-      {/* 2026-11-15 (연): 케이크 카드처럼 여기서 바로 진행 단계를 바꾼다. 즉시 저장되고,
-          DB 트리거(normalize_snl_stage)가 COMPLETED 단계를 오더 STATUS COMPLETED로 맞춰
-          ORDER HISTORY로 넘어간다. */}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <Link className="text-sm underline" to="/orders/$orderId" params={{ orderId: order.id }}>
-          {order.order_number} · POP UP · {plan.title}
-        </Link>
-        <PopupOrderStageSelect order={order} />
-      </div>
+      <ProductionOrderHeader
+        number={order.order_number}
+        title={
+          <Link
+            className="text-sm underline-offset-2 hover:underline"
+            to="/orders/$orderId"
+            params={{ orderId: order.id }}
+          >
+            {plan.title}
+          </Link>
+        }
+        meta={[order.pickup_at ? formatDateTime(order.pickup_at) : "일정 미지정", plan.location]
+          .filter(Boolean)
+          .join(" · ")}
+        status={
+          <PopupOrderStageSelect order={order} selectClassName={productionOrderStatusClass} />
+        }
+      />
+      {plan.items.map((item) => {
+        const title = (
+          <>
+            <p className="text-sm font-medium">{item.label}</p>
+            <p className="text-xs text-muted-foreground">
+              준비 {item.ready_quantity}/{item.quantity} {item.unit}
+            </p>
+          </>
+        );
+        return item.work_session_id ? (
+          <PopupItemProduction
+            key={item.id}
+            sessionId={item.work_session_id}
+            productId={item.product_id}
+            title={title}
+            readOnly={order.status === "COMPLETED" || order.status === "CANCELLED"}
+          />
+        ) : (
+          <ProductionComponentTable key={item.id} sessionId="" rows={[]} readOnly title={title} />
+        );
+      })}
       <p className="text-xs text-muted-foreground">
-        {order.pickup_at ? formatDateTime(order.pickup_at) : "일정 미지정"} · {plan.location}
+        준비 체크 {plan.checklist.filter((c) => c.done).length}/{plan.checklist.length}
       </p>
-      {plan.items.map((item) => (
-        <div key={item.id} className="space-y-2 border-t border-border pt-2">
-          <div className="flex flex-wrap justify-between gap-2 text-sm">
-            <span>
-              {item.label} · 준비 {item.ready_quantity}/{item.quantity} {item.unit}
-            </span>
-            {item.work_session_id && (
-              <Link
-                className="text-xs underline"
-                to="/production/$sessionId"
-                params={{ sessionId: item.work_session_id }}
-              >
-                생산 세션 →
-              </Link>
-            )}
-          </div>
-          {item.work_session_id && (
-            <PopupItemProduction
-              sessionId={item.work_session_id}
-              productId={item.product_id}
-              readOnly={order.status === "COMPLETED"}
-            />
-          )}
-        </div>
-      ))}
-      <p className="text-xs text-muted-foreground">
-        준비 체크 {plan.checklist.filter((c) => c.done).length}/{plan.checklist.length} ·{" "}
-        {popupStageLabel(plan, order.status, readPopupStages(settings.data?.popup_workflow))}
-      </p>
-      <Link className={buttonClass} to="/orders/$orderId" params={{ orderId: order.id }}>
+      <Link
+        className={productionTableButtonClass}
+        to="/orders/$orderId"
+        params={{ orderId: order.id }}
+      >
         POP UP DETAIL · 품목별 세션 준비
       </Link>
     </section>
@@ -76,28 +83,22 @@ export function PopupItemProduction({
   sessionId,
   productId,
   readOnly,
+  title,
 }: {
   sessionId: string;
   productId: string;
   readOnly: boolean;
+  title?: ReactNode;
 }) {
   const client = useQueryClient();
   const rows = useQuery(workSessionFormulaVersionsQuery(sessionId));
   const session = useQuery(workSessionQuery(sessionId));
   const locked = readOnly || session.isLoading || session.isError;
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState<CoreSlot | "ANY" | null>(null);
   // 제품이 연결된 품목은 제품에 저장된 하위 컴포넌트를 세션에 불러온다 — 세션이 비어 있으면 자동으로 한 번,
   // 이후엔 "제품 컴포넌트 불러오기" 버튼으로(이미 있는 건 건너뜀).
   const loadProduct = useMutation({
     mutationFn: () => addProductComponentsToSession(client, sessionId, productId),
-    onSettled: () => void invalidateProductionSync(client),
-  });
-  const removeRow = useMutation({
-    mutationFn: (row: NonNullable<typeof rows.data>[number]) => removePlannedComponent(row),
-    onSuccess: (warning) => {
-      if (warning) toast.error(warning);
-    },
-    onError: (error) => toast.error(error.message),
     onSettled: () => void invalidateProductionSync(client),
   });
   const autoTried = useRef(false);
@@ -114,49 +115,35 @@ export function PopupItemProduction({
           생산 구성을 불러오지 못했습니다.
         </p>
       )}
-      {(rows.data ?? []).map((row) => (
-        <div key={row.id} className={`border p-2 ${slotBoxClass(row.slot)}`}>
-          <OrderComponentPlanRow row={row} disabled={locked} />
-          {!locked && (
-            <div className="mt-1 text-right">
-              <button
-                type="button"
-                title="이 품목에서 컴포넌트 삭제"
-                className="border border-border px-1.5 font-mono text-[11px] leading-5 text-muted-foreground hover:border-destructive hover:text-destructive"
-                disabled={removeRow.isPending}
-                onClick={() => {
-                  const name =
-                    row.formula_versions.formulas.components?.name ??
-                    row.formula_versions.formulas.name;
-                  if (
-                    confirm(
-                      `${name} 지정을 삭제할까요? 예정 블록도 제거되며 원본 레시피는 유지됩니다.`,
-                    )
-                  )
-                    removeRow.mutate(row);
-                }}
-              >
-                {removeRow.isPending ? "…" : "✕ 삭제"}
-              </button>
-            </div>
-          )}
-        </div>
-      ))}
+      <ProductionComponentTable
+        sessionId={sessionId}
+        rows={rows.data ?? []}
+        readOnly={locked}
+        title={title}
+        allowFormulaChange
+      />
       {!locked && (
         <div className="flex flex-wrap gap-2">
           {productId && (
             <button
               type="button"
-              className={buttonClass}
+              className={productionTableButtonClass}
               disabled={loadProduct.isPending}
               onClick={() => loadProduct.mutate()}
             >
               {loadProduct.isPending ? "불러오는 중…" : "제품 컴포넌트 불러오기"}
             </button>
           )}
-          <button type="button" className={buttonClass} onClick={() => setAdding((v) => !v)}>
-            {adding ? "닫기" : "+ 생산 컴포넌트 지정"}
-          </button>
+          {([...CORE_SLOTS, "ANY"] as const).map((slot) => (
+            <button
+              key={slot}
+              type="button"
+              className={cn(productionTableButtonClass, adding === slot && "bg-secondary")}
+              onClick={() => setAdding((previous) => (previous === slot ? null : slot))}
+            >
+              + {slot === "ANY" ? "기타" : CORE_SLOT_LABELS[slot].toUpperCase()}
+            </button>
+          ))}
         </div>
       )}
       {loadProduct.isError && (
@@ -173,9 +160,14 @@ export function PopupItemProduction({
         <AddFormulaVersionForm
           sessionId={sessionId}
           nextSort={rows.data?.length ?? 0}
-          kind="CORE"
+          key={adding}
+          slot={adding === "ANY" ? null : adding}
+          addOnSelect
+          productId={session.data?.product_id ?? (productId || null)}
+          productSizeId={session.data?.product_size_id ?? null}
+          cakeSizeId={session.data?.cake_size_id ?? null}
           onDone={() => {
-            setAdding(false);
+            setAdding(null);
             void invalidateProductionSync(client);
           }}
         />

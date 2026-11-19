@@ -109,18 +109,6 @@ export function ProductionOrderSizeEditor({
       void invalidateProductionSync(client);
     },
   });
-  // 제품만 바로 바꾸기(2026-11-05) — 오더 상세가 읽기 전용이 돼서 PRODUCTION ORDERS에서 바꾼다.
-  // 제품 전용 사이즈는 제품마다 달라 비우고, 다른 미저장 편집은 건드리지 않는다.
-  const changeProduct = useMutation({
-    mutationFn: async (productId: string) => {
-      const next = { ...baseline.current.state, product: productId, size: "" };
-      await persist(next);
-      setDraft((d) => ({ ...d, product: productId, size: "" }));
-    },
-    onSettled: () => {
-      void invalidateProductionSync(client);
-    },
-  });
   const stored = (standards.data ?? []).find((c) => c.id === order.cake_size_id);
   const linkedParts = (selections.data ?? []).flatMap((r) =>
     r.formula_versions.formulas.component_id
@@ -135,27 +123,10 @@ export function ProductionOrderSizeEditor({
       : [],
   );
   return (
-    <div className="border-t border-dashed border-border pt-2 text-xs">
-      <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="label-caps text-[10px] text-muted-foreground">제품</span>
-        <div className="min-w-0 flex-1 basis-56">
-          <ProductSelect
-            value={baseline.current.state.product}
-            disabled={readOnly || changeProduct.isPending || save.isPending}
-            onChange={(id) => changeProduct.mutate(id)}
-            linkedParts={linkedParts}
-          />
-        </div>
-        {changeProduct.isPending && <span className="text-muted-foreground">저장 중…</span>}
-      </div>
-      {changeProduct.isError && (
-        <p role="alert" className="mb-2 text-destructive">
-          {changeProduct.error.message}
-        </p>
-      )}
+    <div className="text-xs">
       <div className="flex items-center gap-2">
-        <span className="flex-1">
-          완성 사이즈 · {stored ? sizeText(stored) : "미지정"}
+        <span className="min-w-0 text-muted-foreground [overflow-wrap:anywhere]">
+          {stored ? sizeText(stored) : "완성 규격 미지정"}
           {order.servings == null ? "" : ` · ${order.servings}인분`}
         </span>
         {!readOnly && (
@@ -170,10 +141,7 @@ export function ProductionOrderSizeEditor({
         )}
       </div>
       {open && !readOnly && (
-        <fieldset
-          disabled={save.isPending || changeProduct.isPending}
-          className="mt-2 space-y-2 border border-border p-2"
-        >
+        <fieldset disabled={save.isPending} className="mt-2 space-y-2 border border-border p-2">
           <label className="block">
             제품
             <ProductSelect

@@ -9,24 +9,31 @@ export function PopupStagePicker({
   value,
   onChange,
   disabled = false,
+  selectClassName,
 }: {
   value: string;
   onChange: (id: string) => void;
   disabled?: boolean;
+  selectClassName?: string | undefined;
 }) {
   const settings = useQuery(pilotSettingsQuery());
   const stages = readPopupStages(settings.data?.popup_workflow);
   // 주문 STATUS와 같은 모양: 색 점 + 테두리 없는 작은 select
   return (
     <div className="flex items-center gap-1.5">
-      <span
-        className="h-2.5 w-2.5 shrink-0 rounded-full"
-        style={{ backgroundColor: popupStageColor(stages, value || stages[0]?.id || "") }}
-        aria-hidden
-      />
+      {!selectClassName && (
+        <span
+          className="h-2.5 w-2.5 shrink-0 rounded-full"
+          style={{ backgroundColor: popupStageColor(stages, value || stages[0]?.id || "") }}
+          aria-hidden
+        />
+      )}
       <select
         aria-label="SNL 팝업 진행 단계"
-        className={`${selectClass} !w-auto !min-h-0 border-none bg-transparent px-1 py-0.5 text-[11px]`}
+        className={
+          selectClassName ??
+          `${selectClass} !w-auto !min-h-0 border-none bg-transparent px-1 py-0.5 text-[11px]`
+        }
         value={value || stages[0]?.id || ""}
         disabled={disabled || settings.isLoading || settings.isError}
         onChange={(e) => onChange(e.target.value)}
@@ -44,7 +51,13 @@ export function PopupStagePicker({
   );
 }
 
-export function PopupOrderStageSelect({ order }: { order: OrderListRow }) {
+export function PopupOrderStageSelect({
+  order,
+  selectClassName,
+}: {
+  order: OrderListRow;
+  selectClassName?: string;
+}) {
   const client = useQueryClient();
   const settings = useQuery(pilotSettingsQuery());
   const stages = readPopupStages(settings.data?.popup_workflow);
@@ -65,6 +78,7 @@ export function PopupOrderStageSelect({ order }: { order: OrderListRow }) {
         value={popupStageId(readPopupPlan(order.popup_plan), order.status, stages)}
         onChange={(id) => save.mutate(id)}
         disabled={save.isPending}
+        selectClassName={selectClassName}
       />
       {save.isError && (
         <p role="alert" className="text-xs text-destructive">
