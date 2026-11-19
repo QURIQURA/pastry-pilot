@@ -1312,7 +1312,6 @@ function WeighingView({
                     formulaName={col.formulaName}
                     formulaId={col.formulaId}
                     versionId={col.formulaVersionId}
-                    multiplier={col.multiplier}
                     onSelect={
                       onSelectColumn
                         ? () => onSelectColumn(col.groupKey ?? col.selectionId)
@@ -1501,7 +1500,6 @@ function MatrixColumnHeader({
   formulaName,
   formulaId,
   versionId,
-  multiplier,
   rnd,
   groupLabel,
   groupFirst = false,
@@ -1521,7 +1519,6 @@ function MatrixColumnHeader({
   formulaName: string;
   formulaId: string;
   versionId: string;
-  multiplier: number;
   /** R&D 실험 중인 버전 — 연두색으로 구분 */
   rnd: boolean;
   onResizeStart: (clientX: number) => void;
@@ -1542,88 +1539,96 @@ function MatrixColumnHeader({
       style={{ transform: CSS.Transform.toString(transform), transition }}
       className={cn(
         // sticky 자체가 absolute 자식의 기준이 되므로 relative를 같이 쓰면 tailwind-merge가 sticky를 지워 헤더가 스크롤로 사라진다.
-        "sticky top-0 z-20 bg-secondary px-3 py-2 text-left align-bottom",
+        "sticky top-0 z-20 bg-secondary px-3 pb-2 pt-8 text-left align-top",
         groupLabel !== undefined
-          ? "shadow-[inset_0_3px_0_0_var(--color-foreground),inset_0_-1px_0_0_var(--color-border),inset_1px_0_0_0_var(--color-border)] pt-8"
+          ? "shadow-[inset_0_3px_0_0_var(--color-foreground),inset_0_-1px_0_0_var(--color-border),inset_1px_0_0_0_var(--color-border)]"
           : "shadow-[inset_0_-1px_0_0_var(--color-border),inset_1px_0_0_0_var(--color-border)]",
         groupFirst && "z-[25]",
         rnd && "!bg-[#DCF0C8]",
         isDragging && "z-40 bg-secondary",
       )}
     >
-      {groupFirst && (
-        <span className="label-caps pointer-events-none absolute left-3 top-1.5 whitespace-nowrap text-[11px] font-semibold text-foreground">
-          🔗 {groupLabel} · BLEND
-        </span>
-      )}
-      <div className="flex items-start gap-1">
-        {/* 열(포뮬라 버전) 드래그 손잡이 */}
+      <div className="absolute inset-x-2 top-1.5 flex items-center justify-between gap-2">
         <button
           type="button"
-          className="mt-0.5 shrink-0 cursor-grab touch-none text-muted-foreground hover:text-foreground active:cursor-grabbing"
+          aria-label="계량 칼럼 순서 변경"
+          className="cursor-grab touch-none text-muted-foreground hover:text-foreground active:cursor-grabbing"
           {...attributes}
           {...listeners}
         >
           <GripVertical className="h-3 w-3" />
         </button>
-        <div className="min-w-0 flex-1">
-          <p className="whitespace-nowrap text-xs leading-tight">
-            {rnd && <span className="label-caps mr-1 text-[10px] text-[#3F7A1F]">🧪 R&amp;D</span>}
-            {onSelect ? (
-              <button type="button" className="text-left hover:underline" onClick={onSelect}>
-                {formulaName}
-              </button>
-            ) : (
-              <Link
-                to="/formulas/$formulaId"
-                params={{ formulaId }}
-                search={{ version: versionId }}
-                className="underline-offset-2 hover:underline"
-                title="포뮬라 페이지 열기"
-                onPointerDown={(e) => e.stopPropagation()}
-              >
-                {formulaName}
-              </Link>
-            )}
-          </p>
-          {sourceLabel && (
-            <p className="truncate text-[10px] text-muted-foreground" title={sourceLabel}>
-              {sourceLabel}
-            </p>
-          )}
-          {onEditPlan ? (
+        <button
+          type="button"
+          aria-label={`Edit formula: ${formulaName}`}
+          className="label-caps border border-border px-1 py-0.5 text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-40"
+          onClick={onEdit}
+          disabled={!onEdit || rnd}
+          title={
+            onEdit && !rnd
+              ? "포뮬라 편집"
+              : rnd
+                ? "아래 R&D 편집기 사용"
+                : "개별 포뮬라 편집은 병합 해제 후 가능"
+          }
+        >
+          EDIT
+        </button>
+      </div>
+      {groupFirst && (
+        <p className="label-caps mb-1 truncate text-[10px] font-semibold" title={groupLabel}>
+          {groupLabel} · BLEND
+        </p>
+      )}
+      <div className="min-w-0">
+        <p className="break-words text-xs leading-tight">
+          {rnd && <span className="label-caps mr-1 text-[10px] text-[#3F7A1F]">🧪 R&amp;D</span>}
+          {onSelect ? (
             <button
               type="button"
-              className="text-left text-[11px] underline-offset-2 hover:underline"
-              onClick={onEditPlan}
+              className="max-w-full break-words text-left hover:underline"
+              onClick={onSelect}
             >
-              {[
-                mouldLabel ?? "몰드 선택",
-                mouldCount != null ? `${mouldCount}개` : null,
-                `×${fmtNumber(multiplier, 3)}`,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
+              {formulaName}
             </button>
           ) : (
-            <p className="label-caps whitespace-nowrap text-[11px] text-muted-foreground">
-              ×{fmtNumber(multiplier, 3)}
-            </p>
+            <Link
+              to="/formulas/$formulaId"
+              params={{ formulaId }}
+              search={{ version: versionId }}
+              className="underline-offset-2 hover:underline"
+              title="포뮬라 페이지 열기"
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              {formulaName}
+            </Link>
           )}
-        </div>
-        {/* 2026-10-14 사용자 요청: "work session에서 재료 추가하고 추가된 재료로 새로운 버전
-            포뮬라 추가 하는버튼" — 포뮬라 페이지로 이동하지 않고 이 열의 레시피를 바로
-            수정/새 버전 저장할 수 있게 하는 진입점. */}
-        {!rnd && (
+        </p>
+        {sourceLabel && (
+          <p className="truncate text-[10px] text-muted-foreground" title={sourceLabel}>
+            {sourceLabel}
+          </p>
+        )}
+        {onEditPlan ? (
           <button
             type="button"
-            className="label-caps shrink-0 px-1 py-0.5 text-[10px] text-muted-foreground hover:border hover:border-border hover:text-foreground"
-            onClick={onEdit}
-            disabled={!onEdit}
-            title={!onEdit ? "UNMERGE 후 개별 레시피를 수정하세요" : undefined}
+            className="text-left text-[11px] underline-offset-2 hover:underline"
+            onClick={onEditPlan}
+            title="생산 계획 편집"
           >
-            EDIT FORMULA
+            {mouldLabel
+              ? [mouldLabel, mouldCount != null ? `${mouldCount}개` : null]
+                  .filter(Boolean)
+                  .join(" · ")
+              : "생산 수량 편집"}
           </button>
+        ) : (
+          mouldLabel && (
+            <p className="text-[11px] text-muted-foreground">
+              {mouldLabel}
+              {mouldCount != null ? ` · ${mouldCount}개` : ""}
+            </p>
+          )
         )}
       </div>
       {mergeAction && (
