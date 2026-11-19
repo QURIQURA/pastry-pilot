@@ -13,12 +13,7 @@ import { formatDateTime } from "@/lib/datetime";
 import { fmtNumber } from "@/lib/formula";
 import { mouldAbbr } from "@/lib/component-size";
 import { sumBaseGrams } from "@/lib/work-session";
-import {
-  equalMouldSplit,
-  formatMouldSplit,
-  matchesMouldSplit,
-  mouldBatchGrams,
-} from "@/lib/production-quantity";
+import { mouldBatchGrams } from "@/lib/production-quantity";
 import {
   removePlannedComponent,
   reopenComponentForProduction,
@@ -84,7 +79,10 @@ export function ProductionComponentTable({
   const blocks = useQuery(workBlocksQuery());
   const tasks = useQuery({ ...workSessionTasksQuery(sessionId), enabled: Boolean(sessionId) });
   const tasksById = new Map((tasks.data ?? []).map((task) => [task.id, task]));
-  const [open, setOpen] = useState<string | null>(null);
+  const [open, setOpen] = useState<{
+    id: string;
+    section: "schedule" | "mould" | "settings";
+  } | null>(null);
   const records = new Map<string, Actual>();
   const planned = new Map<string, string>();
   const rowIds = new Set(rows.map((row) => row.id));
@@ -147,7 +145,7 @@ export function ProductionComponentTable({
             <thead>
               <tr>
                 <th scope="col">컴포넌트</th>
-                <th scope="col">몰드 · 배분</th>
+                <th scope="col">몰드</th>
                 <th scope="col" className="text-right">
                   전체 중량
                 </th>
@@ -164,8 +162,15 @@ export function ProductionComponentTable({
                   planned={planned.get(row.id) ?? row.planned_date}
                   readOnly={readOnly}
                   allowFormulaChange={allowFormulaChange}
-                  open={open === row.id}
-                  toggle={() => setOpen(open === row.id ? null : row.id)}
+                  open={open?.id === row.id ? open.section : null}
+                  toggle={(section) =>
+                    setOpen(
+                      open?.id === row.id && open.section === section
+                        ? null
+                        : { id: row.id, section },
+                    )
+                  }
+                  close={() => setOpen((current) => (current?.id === row.id ? null : current))}
                   warning={warning?.(row.id)}
                 />
               ))}
@@ -189,6 +194,7 @@ function ComponentRow({
   allowFormulaChange,
   open,
   toggle,
+  close,
   warning,
 }: {
   row: Selection;
@@ -196,8 +202,9 @@ function ComponentRow({
   planned: string | null;
   readOnly: boolean;
   allowFormulaChange: boolean;
-  open: boolean;
-  toggle: () => void;
+  open: "schedule" | "mould" | "settings" | null;
+  toggle: (section: NonNullable<typeof open>) => void;
+  close: () => void;
   warning?: ReactNode;
 }) {
   const client = useQueryClient();
@@ -212,10 +219,11 @@ function ComponentRow({
     mould?.reference_weight_g,
     row.batter_split_g,
   );
-  const split =
-    row.batter_split_g && matchesMouldSplit(row.batter_split_g, count, grams)
-      ? row.batter_split_g
-      : equalMouldSplit(grams, count);
+  const mouldLabel = mould ? mouldAbbr(mould) : "—";
+  const canEditPlan = !readOnly && !actual?.start && !actual?.end && !actual?.done;
+  const canEditMould =
+    canEditPlan &&
+    Boolean(row.mould_id || row.slot === "SHEET" || row.formula_versions.default_mould_id);
   const name = row.formula_versions.formulas.components?.name ?? row.formula_versions.formulas.name;
   const remove = useMutation({
     mutationFn: () => removePlannedComponent(row),
@@ -255,9 +263,19 @@ function ComponentRow({
           </div>
         </td>
         <td>
-          {mould
-            ? `${mouldAbbr(mould)}${split.length ? ` · ${formatMouldSplit(split)}` : ""}`
-            : "—"}
+          {canEditMould ? (
+            <button
+              type="button"
+              aria-expanded={open === "mould"}
+              aria-label={`${name} 몰드 수정`}
+              className="max-w-full text-left underline underline-offset-2 [overflow-wrap:anywhere]"
+              onClick={() => toggle("mould")}
+            >
+              {mould ? mouldLabel : "몰드 지정"}
+            </button>
+          ) : (
+            mouldLabel
+          )}
         </td>
         <td className="text-right font-mono tabular-nums">
           {ingredients.isSuccess
@@ -266,7 +284,21 @@ function ComponentRow({
               ? "조회 실패"
               : "—"}
         </td>
-        <td className="font-mono text-muted-foreground">{recorded ?? "—"}</td>
+        <td className="font-mono text-muted-foreground">
+          {canEditPlan ? (
+            <button
+              type="button"
+              aria-expanded={open === "schedule"}
+              aria-label={`${name} 예정 날짜와 시간 수정`}
+              className="max-w-full text-left underline underline-offset-2 [overflow-wrap:anywhere]"
+              onClick={() => toggle("schedule")}
+            >
+              {recorded ?? "일정 지정"}
+            </button>
+          ) : (
+            (recorded ?? "—")
+          )}
+        </td>
         <td>
           {actual?.done ? (
             <div className="flex flex-wrap items-center gap-1">
@@ -290,18 +322,25 @@ function ComponentRow({
           ) : !readOnly ? (
             <button
               type="button"
-              aria-expanded={open}
+              aria-expanded={open === "settings"}
               className={productionTableButtonClass}
-              onClick={toggle}
+              onClick={() => toggle("settings")}
             >
-              {open ? "닫기" : "설정"}
+              {open === "settings" ? "닫기" : "설정"}
             </button>
           ) : (
             "—"
           )}
         </td>
       </tr>
-      {open && !readOnly && !actual?.done && (
+      {canEditPlan && (open === "schedule" || open === "mould") && (
+        <tr>
+          <td colSpan={5}>
+            <OrderComponentPlanRow key={open} row={row} section={open} onClose={close} />
+          </td>
+        </tr>
+      )}
+      {open === "settings" && !readOnly && !actual?.done && (
         <tr>
           <td colSpan={5}>
             <OrderComponentPlanRow row={row} allowFormulaChange={allowFormulaChange} />
