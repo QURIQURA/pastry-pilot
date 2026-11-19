@@ -1152,6 +1152,7 @@ export const dailyTasksQuery = () =>
 
 /** 대시보드가 다루는 "오더의 컴포넌트" 한 줄 — 오더에 연결된 WORK SESSION의 CORE 행. */
 export interface DashboardComponentRow {
+  plannedDate: string | null;
   id: string; // work_session_formula_versions.id
   multiplier: number;
   /** 대기공간 표기용 — 생산 사이즈(몰드)·개수와 목표 중량 */
@@ -1189,12 +1190,13 @@ export const dashboardComponentsQuery = () =>
         await supabase
           .from("work_session_formula_versions")
           .select(
-            "id, multiplier, mould_id, mould_qty, base_weight_id, base_weight_qty, target_quantity_g, formula_version_id, slot, work_session_id, planner_task_id, sort_order, formula_versions(id, formula_version_ingredients(amount_source), formulas(id, name, derived_from_formula_id, components(id, name))), work_sessions!inner(id, status, order_id, orders(id, order_number, status, pickup_at, event_date, least_liked_flavours, products(name), customers(name)))",
+            "id, planned_date, multiplier, mould_id, mould_qty, base_weight_id, base_weight_qty, target_quantity_g, formula_version_id, slot, work_session_id, planner_task_id, sort_order, formula_versions(id, formula_version_ingredients(amount_source), formulas(id, name, derived_from_formula_id, components(id, name))), work_sessions!inner(id, status, order_id, orders(id, order_number, status, pickup_at, event_date, least_liked_flavours, products(name), customers(name)))",
           )
           .is("parent_selection_id", null)
           .order("sort_order", { ascending: true }),
       ) as unknown as {
         id: string;
+        planned_date: string | null;
         multiplier: number;
         mould_id: string | null;
         mould_qty: number | null;
@@ -1263,6 +1265,7 @@ export const dashboardComponentsQuery = () =>
         if (!order) continue; // 오더에 연결 안 된 세션은 대시보드 대상이 아니다
         const formula = r.formula_versions?.formulas ?? null;
         rows.push({
+          plannedDate: r.planned_date,
           id: r.id,
           multiplier: Number(r.multiplier),
           mouldId: r.mould_id,
@@ -1375,6 +1378,7 @@ export const allEfficiencySessionsQuery = () =>
   });
 
 export interface WorkSessionFormulaVersionRow extends WorkSessionFormulaVersion {
+  planned_date: string | null;
   formula_versions: {
     id: string;
     version_number: number;

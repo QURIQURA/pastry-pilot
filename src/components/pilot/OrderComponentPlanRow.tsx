@@ -86,7 +86,7 @@ export function OrderComponentPlanRow({
           start: hhmm(oneBlock.start_time),
           dur: String(minOf(oneBlock.end_time) - minOf(oneBlock.start_time)),
         }
-      : { date: "", start: "", dur: "60" };
+      : { date: row.planned_date ?? "", start: "", dur: "60" };
   const [sched, setSched] = useState(schedFrom);
   const schedBase = useRef(JSON.stringify(sched));
   useEffect(() => {
@@ -96,11 +96,17 @@ export function OrderComponentPlanRow({
       setSched(n);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [oneBlock?.id, oneBlock?.block_date, oneBlock?.start_time, oneBlock?.end_time]);
+  }, [oneBlock?.id, oneBlock?.block_date, oneBlock?.start_time, oneBlock?.end_time, row.planned_date]);
   const schedDirty = JSON.stringify(sched) !== schedBase.current;
   const saveSched = useMutation({
     mutationFn: async () => {
-      if (!sched.date || !sched.start) return;
+      if (!sched.start) {
+        const { error } = await supabase.from("work_session_formula_versions")
+          .update({ planned_date: sched.date || null }).eq("id", row.id);
+        if (error) throw error;
+        return;
+      }
+      if (!sched.date) throw new Error("시작 시간을 지정하려면 날짜도 필요합니다");
       const dur = Number(sched.dur);
       if (!(dur >= 15)) throw new Error("작업 시간은 15분 이상으로 입력하세요");
       const s = minOf(sched.start);
@@ -133,12 +139,16 @@ export function OrderComponentPlanRow({
         });
         if (error) throw error;
       }
+      const { error: planError } = await supabase.from("work_session_formula_versions")
+        .update({ planned_date: null }).eq("id", row.id);
+      if (planError) throw planError;
       await syncWorkSessionToPlanner(row.work_session_id);
     },
     onSuccess: async () => {
       schedBase.current = JSON.stringify(sched);
       await client.invalidateQueries({ queryKey: ["work_blocks"] });
       await client.invalidateQueries({ queryKey: ["dashboard_components"] });
+      await client.invalidateQueries({ queryKey: ["work_session_formula_versions", row.work_session_id] });
     },
   });
   const formulas = useQuery({ ...formulasQuery(), enabled: allowFormulaChange });
@@ -395,8 +405,9 @@ export function OrderComponentPlanRow({
             <p className="font-mono text-[11px] text-muted-foreground">
               {versionText} · {planText}
               {productionText}
-              {oneBlock &&
-                ` · ${oneBlock.block_date} ${hhmm(oneBlock.start_time)}–${hhmm(oneBlock.end_time)} 타임라인`}
+              {oneBlock
+                ? ` · ${oneBlock.block_date} ${hhmm(oneBlock.start_time)}–${hhmm(oneBlock.end_time)} 타임라인`
+                : row.planned_date ? ` · ${row.planned_date} 날짜 계획` : ""}
             </p>
           )}
         </div>
@@ -726,26 +737,17 @@ export function OrderComponentPlanRow({
             type="button"
             className={buttonClass}
             disabled={
-              (!dirty && !(schedDirty && sched.date && sched.start)) ||
+              (!dirty && !schedDirty) ||
               conflict ||
               versions.isError ||
               ingredients.isError
             }
             onClick={() => {
-              // Recipe quantity can be saved without scheduling a time.
-              // Never silently discard a date-only assignment.
-              if (schedDirty && sched.date && !sched.start) {
-                if (!dirty) {
-                  toast.error("날짜만 배정하는 기능은 아직 지원되지 않습니다. 시간까지 입력하거나 날짜를 비워 주세요.");
-                  return;
-                }
-                toast.info("레시피 수량은 저장합니다. 날짜만 배정하려면 별도 날짜 계획 기능이 필요합니다.");
-              }
               if (schedDirty && sched.start && !sched.date) {
                 toast.error("시간을 배정하려면 날짜도 입력해 주세요.");
                 return;
               }
-              const wantSched = schedDirty && Boolean(sched.date && sched.start);
+              const wantSched = schedDirty;
               if (dirty)
                 save.mutate(undefined, {
                   onSuccess: () => {

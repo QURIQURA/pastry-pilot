@@ -4089,6 +4089,7 @@ export type Database = {
           parent_selection_id: string | null
           plan_ingredient_g: number | null
           plan_ingredient_id: string | null
+          planned_date: string | null
           planner_task_id: string | null
           slot: string | null
           sort_order: number
@@ -4114,6 +4115,7 @@ export type Database = {
           parent_selection_id?: string | null
           plan_ingredient_g?: number | null
           plan_ingredient_id?: string | null
+          planned_date?: string | null
           planner_task_id?: string | null
           slot?: string | null
           sort_order?: number
@@ -4139,6 +4141,7 @@ export type Database = {
           parent_selection_id?: string | null
           plan_ingredient_g?: number | null
           plan_ingredient_id?: string | null
+          planned_date?: string | null
           planner_task_id?: string | null
           slot?: string | null
           sort_order?: number

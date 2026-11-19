@@ -309,6 +309,7 @@ export function ProductionDashboard() {
       parts.push(`${Math.round(r.targetQuantityG)}g`);
     if (r.multiplier && r.multiplier !== 1)
       parts.push(`배수 ×${Math.round(r.multiplier * 100) / 100}`);
+    if (r.plannedDate) parts.push(`날짜 계획 ${r.plannedDate} · 시간 미정`);
     return parts.join(" · ");
   };
 
