@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -733,6 +734,19 @@ export function OrderComponentPlanRow({
               ingredients.isError
             }
             onClick={() => {
+              // Recipe quantity can be saved without scheduling a time.
+              // Never silently discard a date-only assignment.
+              if (schedDirty && sched.date && !sched.start) {
+                if (!dirty) {
+                  toast.error("날짜만 배정하는 기능은 아직 지원되지 않습니다. 시간까지 입력하거나 날짜를 비워 주세요.");
+                  return;
+                }
+                toast.info("레시피 수량은 저장합니다. 날짜만 배정하려면 별도 날짜 계획 기능이 필요합니다.");
+              }
+              if (schedDirty && sched.start && !sched.date) {
+                toast.error("시간을 배정하려면 날짜도 입력해 주세요.");
+                return;
+              }
               const wantSched = schedDirty && Boolean(sched.date && sched.start);
               if (dirty)
                 save.mutate(undefined, {
