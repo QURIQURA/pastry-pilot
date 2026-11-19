@@ -657,7 +657,7 @@ export function BlockTimerChip({
           onMouseDown={stop}
           onClick={async (e) => {
             e.stopPropagation();
-            const endIso = new Date().toISOString();
+            const endIso = task.completed_at ?? new Date().toISOString();
             const userId = await currentUserId();
             await supabase
               .from("work_session_tasks")

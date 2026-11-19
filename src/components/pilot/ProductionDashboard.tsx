@@ -2355,10 +2355,9 @@ function ProductionBlockRecord({
   /** 병합 컴포넌트의 한 벌 기록 — 이 기록이 함께 다루는 오더들 */
   mergedLabel?: string;
 }) {
-  // 기본으로 열어 둔다(사용자가 닫지 않는 한) — 타이머·관찰값을 바로 입력할 수 있게.
   const tasks = useQuery(workSessionTasksQuery(row.work_session_id));
   const task = tasks.data?.find((item) => item.id === block.work_session_task_id);
-  const [expanded, setExpanded] = useState(active);
+  const [expanded, setExpanded] = useState(active || task?.status === "IN_PROGRESS");
   useEffect(() => {
     if (active) setExpanded(true);
   }, [active]);
@@ -2380,6 +2379,11 @@ function ProductionBlockRecord({
             : "시작 전"}
         </span>
       </button>
+      {task && task.status !== "DONE" && (
+        <div className="flex flex-wrap gap-1 pb-2">
+          <BlockTimerChip block={block} row={row} onStarted={onStarted} part="timer" />
+        </div>
+      )}
       {expanded && (
         <BlockTaskDetails
           block={block}
