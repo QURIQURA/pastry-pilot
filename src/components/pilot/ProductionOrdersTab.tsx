@@ -398,6 +398,7 @@ export function ProductionOrdersTab({ completed = false }: { completed?: boolean
                 {session && adding?.orderId === order.id && mode === "pick" && (
                   <AddFormulaVersionForm
                     addOnSelect
+                    cakeSizeId={session.cake_size_id ?? order.cake_size_id}
                     key={adding.slot}
                     sessionId={session.id}
                     nextSort={rows.length}

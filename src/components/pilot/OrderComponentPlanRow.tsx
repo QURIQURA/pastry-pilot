@@ -216,7 +216,12 @@ export function OrderComponentPlanRow({
   const autoMode = draft.mould ? "MOULD" : draft.bw ? "BASE" : draft.ing ? "ING" : "MULT";
   const mode = draft.mode || autoMode;
   const useMould = mode === "MOULD" && mouldMode && Boolean(targetMould?.reference_weight_g);
-  const effectiveMultiplier = useMould
+  const scalingChanged =
+    draft.version !== row.formula_version_id ||
+    draft.mould !== (row.mould_id ?? "") ||
+    draft.qty !== (row.mould_qty == null ? "" : String(row.mould_qty)) ||
+    draft.mode === "MOULD";
+  const effectiveMultiplier = useMould && scalingChanged
     ? (mouldMultiplierForRecipe(Number(qtyText), base, targetMould) ?? Number.NaN)
     : Number(draft.multiplier);
   // 기준중량 기준(가나슈/크림/필링 등 몰드 없는 컴포넌트): 설정의 기준중량 × 개수 = 목표 중량 → 배수 자동 계산.
