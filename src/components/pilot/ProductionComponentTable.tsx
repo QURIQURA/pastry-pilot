@@ -239,7 +239,7 @@ function ComponentRow({
           other.formulaVersionId === row.formula_version_id &&
           (workDateOf(other.id) ?? other.plannedDate) === day &&
           !["COMPLETED", "CANCELLED"].includes(other.order.status) &&
-          !batchBySelection.has(other.id),
+          batchBySelection.get(other.id) !== batch,
       )
     : [];
   const ingredients = useQuery(versionIngredientsQuery(row.formula_version_id));
@@ -423,6 +423,11 @@ function ComponentRow({
                     }}
                   />
                   <span className="font-medium">{other.order.order_number}</span>
+                  {batchBySelection.has(other.id) && (
+                    <span className="text-[10px] text-muted-foreground">
+                      (기존 병합 {dashboardRows.filter((member) => batchBySelection.get(member.id) === batchBySelection.get(other.id)).length}건)
+                    </span>
+                  )}
                   <span className="text-muted-foreground">
                     {" · "}
                     {(() => {
