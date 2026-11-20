@@ -239,7 +239,7 @@ function ComponentRow({
           other.formulaVersionId === row.formula_version_id &&
           (workDateOf(other.id) ?? other.plannedDate) === day &&
           !["COMPLETED", "CANCELLED"].includes(other.order.status) &&
-          batchBySelection.get(other.id) !== batch,
+          (!batch || batchBySelection.get(other.id) !== batch),
       )
     : [];
   const ingredients = useQuery(versionIngredientsQuery(row.formula_version_id));
