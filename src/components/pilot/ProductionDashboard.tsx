@@ -559,16 +559,14 @@ export function ProductionDashboard() {
     return toMin(formatTime(instant)) + instant.getSeconds() / 60;
   };
   const completeRecords = productionRecords.filter((record) => record.done);
-  const activeIds = new Set(activeItems.map((item) => item.rowId));
-  const openRecords = productionRecords.filter(
-    (record) => !record.done && record.rows.some((id) => activeIds.has(id)),
+  // The right-hand production record list is a day-wide timeline, not a view of
+  // the currently selected 1차/2차 work tab. Tabs only scope the editing workspace.
+  const allDayItems = tabItems.flat();
+  const openRecords = productionRecords.filter((record) => !record.done);
+  const unrecordedDayItems = allDayItems.filter(
+    (item) => !productionRecords.some((record) => record.rows.includes(item.rowId)),
   );
-  const showQueue =
-    date >= todayStr &&
-    (openRecords.length > 0 ||
-      activeItems.some(
-        (item) => !productionRecords.some((record) => record.rows.includes(item.rowId)),
-      ));
+  const showQueue = date >= todayStr && (openRecords.length > 0 || unrecordedDayItems.length > 0);
   const focusRecord = (id: string) => {
     const index = tabItems.findIndex((items) => items.some((item) => item.rowId === id));
     if (index >= 0) setWorkTab(index);
@@ -1503,12 +1501,7 @@ export function ProductionDashboard() {
                       />
                     ),
                   })),
-                  ...activeItems
-                    .filter(
-                      (item) =>
-                        !productionRecords.some((record) => record.rows.includes(item.rowId)),
-                    )
-                    .map((item) => ({
+                  ...unrecordedDayItems.map((item) => ({
                       position: recordPosition({ rows: [item.rowId] }),
                       node: (
                         <p key={item.rowId} className="py-1 text-xs">
