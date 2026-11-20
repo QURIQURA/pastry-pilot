@@ -28,6 +28,7 @@ import {
   usePlannerContextToggle,
 } from "@/components/pilot/PlannerAvailability";
 import { TimelineSettingsPanel, timelineSegments, useTimelineRange } from "./TimelineSettings";
+import { PlannerShoppingPanel } from "./PlannerShoppingPanel";
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -1612,6 +1613,8 @@ export function ProductionDashboard() {
           </details>
         </>
       ) : null}
+      {/* Planner owns shopping items; bottom of Work Session Dashboard. */}
+      <PlannerShoppingPanel date={date} />
     </div>
   );
 }
