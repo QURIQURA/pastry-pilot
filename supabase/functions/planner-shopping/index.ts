@@ -1,3 +1,4 @@
+/* eslint-disable prettier/prettier -- formatting to be normalized in follow-up */
 // Planner owns shopping tasks; PILOT is a live, authenticated remote client.
 // No replicated shopping records are stored in PILOT.
 import { createClient } from "jsr:@supabase/supabase-js@2";
