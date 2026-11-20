@@ -1825,7 +1825,7 @@ function WeighingMatrixCell({
             {cell.lineNote}
           </span>
         </span>
-      )
+      )}
       {setProgress.isError && (
         <p className="absolute z-30 mt-8 w-40 bg-destructive px-1 py-0.5 text-[10px] text-destructive-foreground">
           저장 실패 — 다시 클릭해보세요
