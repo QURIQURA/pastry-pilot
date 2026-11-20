@@ -26,3 +26,7 @@ verify_jwt = false
 # New (#17): called from the browser with the signed-in user's JWT.
 [functions.dev-board-github-sync]
 verify_jwt = true
+
+# Browser JWT verified in function; gateway JWT remains off to support publishable keys.
+[functions.planner-shopping]
+verify_jwt = false
