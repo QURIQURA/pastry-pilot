@@ -425,7 +425,11 @@ function ComponentRow({
                   <span className="font-medium">{other.order.order_number}</span>
                   {batchBySelection.has(other.id) && (
                     <span className="text-[10px] text-muted-foreground">
-                      (기존 병합 {dashboardRows.filter((member) => batchBySelection.get(member.id) === batchBySelection.get(other.id)).length}건)
+                      (기존 병합: {dashboardRows
+                        .filter((member) => batchBySelection.get(member.id) === batchBySelection.get(other.id))
+                        .map((member) => member.order.order_number)
+                        .filter((number, index, all) => all.indexOf(number) === index)
+                        .join(" + ")})
                     </span>
                   )}
                   <span className="text-muted-foreground">

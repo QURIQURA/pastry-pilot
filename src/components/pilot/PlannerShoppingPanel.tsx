@@ -54,7 +54,7 @@ function occurrenceOnOrBefore(item: ShoppingItem, today: string) {
 }
 
 /** Shared Planner list: no PILOT shopping table or local-only shadow copies. */
-export function PlannerShoppingPanel({ date }: { date: string }) {
+export function PlannerShoppingPanel({ date, compact = false }: { date: string; compact?: boolean }) {
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState("");
   const [showAll, setShowAll] = useState(false);
@@ -97,7 +97,7 @@ export function PlannerShoppingPanel({ date }: { date: string }) {
       ? item.completed
       : (query.data?.completions ?? []).some((c) => c.task_id === item.id && c.occurrence_date === occurrence);
   return (
-    <section className="border border-border bg-card p-3 space-y-2" aria-label="Planner Shopping List">
+    <section className={compact ? "space-y-2 p-2" : "border border-border bg-card p-3 space-y-2"} aria-label="Planner Shopping List">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <h2 className="label-caps text-xs">Shopping List · Planner</h2>
@@ -133,7 +133,7 @@ export function PlannerShoppingPanel({ date }: { date: string }) {
       {!query.isLoading && !query.isError && items.length === 0 && (
         <p className="text-xs text-muted-foreground">표시할 쇼핑 항목이 없어요.</p>
       )}
-      <div className="grid grid-cols-1 gap-x-5 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
+      <div className={compact ? "grid grid-cols-1 gap-1 max-h-64 overflow-y-auto" : "grid grid-cols-1 gap-x-5 gap-y-1 sm:grid-cols-2 lg:grid-cols-3"}>
         {items.map((item) => {
           const occurrence = occurrenceOnOrBefore(item, today);
           const done = doneFor(item, occurrence);

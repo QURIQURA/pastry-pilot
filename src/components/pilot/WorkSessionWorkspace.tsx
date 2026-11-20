@@ -1816,13 +1816,15 @@ function WeighingMatrixCell({
       >
         {setProgress.isError ? "⚠" : PROGRESS_STATUS_ICON[cell.progressStatus]}
       </button>
-      {cell.lineNote && (
-        <p
-          className="basis-full text-[11px] leading-tight text-muted-foreground"
-          title={cell.lineNote}
-        >
-          💬 {cell.lineNote}
-        </p>
+      {cell.lineNote?.trim() && (
+        <span className="group/note relative ml-1 inline-flex shrink-0 items-center">
+          <span tabIndex={0} role="note" aria-label={`재료 메모: ${cell.lineNote}`}
+            className="cursor-help rounded-sm border border-border px-1 text-[10px] text-muted-foreground focus:outline-2 focus:outline-offset-1 focus:outline-foreground"
+            title={cell.lineNote}>💬</span>
+          <span role="tooltip" className="pointer-events-none absolute bottom-full left-0 z-50 mb-1 hidden w-max max-w-64 whitespace-pre-wrap border border-border bg-popover p-2 text-xs leading-relaxed text-popover-foreground shadow-lg group-hover/note:block group-focus-within/note:block">
+            {cell.lineNote}
+          </span>
+        </span>
       )}
       {setProgress.isError && (
         <p className="absolute z-30 mt-8 w-40 bg-destructive px-1 py-0.5 text-[10px] text-destructive-foreground">
@@ -3901,7 +3903,7 @@ export function DayWorkView({
           selectionId: r.id,
           formulaVersionId: r.formula_version_id,
           formulaId: r.formula_versions.formulas.id,
-          formulaName: `${r.formula_versions.formulas.components?.name ?? r.formula_versions.formulas.name}${group.members.length > 1 ? ` · MERGED ${group.members.length}` : ""}`,
+          formulaName: `${r.formula_versions.formulas.components?.name ?? r.formula_versions.formulas.name}${group.members.length > 1 ? ` · ${group.members.map((m) => labels[m.id] ?? m.sessionId.slice(0, 8)).join(" + ")}` : ""}`,
           versionNumber: r.formula_versions.version_number,
           multiplier,
           sortOrder: idx,
