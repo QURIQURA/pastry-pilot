@@ -28,6 +28,30 @@ const localToday = () => {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 };
 
+function occursOn(anchor: string | null, recurrence: string, date: string) {
+  if (!anchor || date < anchor) return false;
+  if (recurrence === "none") return anchor === date;
+  const a = new Date(anchor + "T12:00:00Z");
+  const b = new Date(date + "T12:00:00Z");
+  const diff = Math.round((b.getTime() - a.getTime()) / 86400000);
+  if (recurrence === "daily") return true;
+  if (recurrence === "weekly") return diff % 7 === 0;
+  if (recurrence === "biweekly") return diff % 14 === 0;
+  if (recurrence === "monthly") return a.getUTCDate() === b.getUTCDate();
+  return false;
+}
+function occurrenceOnOrBefore(item: ShoppingItem, today: string) {
+  if (item.recurrence === "none") return item.due_date ?? today;
+  if (!item.due_date || item.due_date > today) return item.due_date ?? today;
+  const d = new Date(today + "T12:00:00Z");
+  for (let i = 0; i < 400; i++) {
+    const date = d.toISOString().slice(0, 10);
+    if (occursOn(item.due_date, item.recurrence, date)) return date;
+    d.setUTCDate(d.getUTCDate() - 1);
+  }
+  return item.due_date;
+}
+
 /** Shared Planner list: no PILOT shopping table or local-only shadow copies. */
 export function PlannerShoppingPanel({ date }: { date: string }) {
   const queryClient = useQueryClient();
@@ -110,7 +134,7 @@ export function PlannerShoppingPanel({ date }: { date: string }) {
       )}
       <div className="grid grid-cols-1 gap-x-5 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
         {items.map((item) => {
-          const occurrence = item.recurrence === "none" ? item.due_date ?? today : today;
+          const occurrence = occurrenceOnOrBefore(item, today);
           const done = doneFor(item, occurrence);
           return <div key={item.id} className="flex items-center gap-2 min-w-0 text-xs py-1 border-b border-border/40">
             <input type="checkbox" aria-label={`${item.title} 완료`} checked={done}
@@ -120,7 +144,7 @@ export function PlannerShoppingPanel({ date }: { date: string }) {
               {item.title}
             </span>
             {item.shopping_type && <span className="text-[10px] text-muted-foreground">{item.shopping_type.replaceAll("_", " ")}</span>}
-            {item.due_date && <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">{item.due_date.slice(5)}</span>}
+            {item.due_date && <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">{(item.recurrence === "none" ? item.due_date : occurrence).slice(5)}</span>}
           </div>;
         })}
       </div>
