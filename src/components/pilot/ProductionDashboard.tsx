@@ -1721,6 +1721,14 @@ function DailyRecordRow({
           ✕
         </button>
       </div>
+      {/shop(ping)?|쇼핑|장보기/i.test(task.name) && (
+        <details className="border border-border/70 bg-card">
+          <summary className="cursor-pointer px-2 py-1.5 text-xs font-medium">
+            ▾ Planner Shopping List · 목록 / 체크 / 빠른 추가
+          </summary>
+          <PlannerShoppingPanel date={task.task_date} compact />
+        </details>
+      )}
       <div className="flex flex-wrap items-center gap-1.5">
         <input
           type="time"
