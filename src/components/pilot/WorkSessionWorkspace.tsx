@@ -1267,7 +1267,7 @@ function WeighingView({
     );
 
   return (
-    <div className="max-h-[70vh] overflow-auto border border-border">
+    <div className="w-full overflow-x-auto overflow-y-visible border border-border">
       <table
         className="w-full border-collapse text-sm"
         style={{ tableLayout: "auto", minWidth: dataWidth }}
