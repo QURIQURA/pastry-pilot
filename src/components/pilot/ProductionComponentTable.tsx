@@ -239,7 +239,7 @@ function ComponentRow({
           other.formulaVersionId === row.formula_version_id &&
           (workDateOf(other.id) ?? other.plannedDate) === day &&
           !["COMPLETED", "CANCELLED"].includes(other.order.status) &&
-          !batchBySelection.has(other.id),
+          (!batch || batchBySelection.get(other.id) !== batch),
       )
     : [];
   const ingredients = useQuery(versionIngredientsQuery(row.formula_version_id));
@@ -422,8 +422,29 @@ function ComponentRow({
                       );
                     }}
                   />
-                  {other.order.order_number}
-                  {other.order.customerName ? ` · ${other.order.customerName}` : ""}
+                  <span className="font-medium">{other.order.order_number}</span>
+                  {batchBySelection.has(other.id) && (
+                    <span className="text-[10px] text-muted-foreground">
+                      (기존 병합 {dashboardRows.filter((member) => batchBySelection.get(member.id) === batchBySelection.get(other.id)).length}건)
+                    </span>
+                  )}
+                  <span className="text-muted-foreground">
+                    {" · "}
+                    {(() => {
+                      const candidateMould = moulds.data?.find((item) => item.id === other.mouldId);
+                      const candidateCount = Number(other.mouldQty ?? 0);
+                      const candidateGrams = mouldBatchGrams(
+                        sumBaseGrams(ingredients.data ?? []) * Number(other.multiplier),
+                        candidateMould ? candidateCount : 0,
+                        candidateMould?.reference_weight_g,
+                      );
+                      return [
+                        candidateMould ? mouldAbbr(candidateMould) : "몰드 미지정",
+                        candidateCount > 0 ? `× ${candidateCount}개` : "수량 미지정",
+                        ingredients.isSuccess ? `${fmtNumber(candidateGrams, 0)}g` : "중량 조회 중",
+                      ].join(" · ");
+                    })()}
+                  </span>
                 </label>
               ))}
               <div className="flex flex-wrap gap-1">
