@@ -25,3 +25,13 @@ Wann Planner owns `public.planner_tasks` (`is_shopping=true`) and `public.planne
 - Polling is every 15 seconds, not a database replication or instant push channel.
 - Existing WANN shopping items beyond the first 500 are not displayed; API returns an explicit error only for upstream failures.
 - Production UI and cross-app write verification must be recorded with actual evidence before DONE.
+
+## 2026-11-20 deployment evidence
+- PR #64 squash merged to main as `af13d50a5b0280a60e8a082932ef2dfa74e2e528`.
+- GitHub PR checks run #71 `44643159854`: SUCCESS (build, system tests, lint, SQL tests).
+- Supabase Edge Function `planner-shopping` deployed to project `meswjzwxldhqkjglnmzt` as ACTIVE version 1, `verify_jwt=false` (strict owner JWT verified in function).
+- Cloudflare Workers deploy run `44643246233`: SUCCESS. Worker `quriqura-kora-pilot`, URL `https://quriqura-kora-pilot.oompaya.workers.dev`, version `dfba54b2-e7d3-4457-852e-9bfb8e4bba3a`.
+- Post-deploy check run `44643324062`: SUCCESS.
+- WANN source aggregate verified: 1 PILOT integration link and 43 shopping items. No test shopping record created or altered.
+- GitHub Supabase auto-deploy run `44643246468` is waiting for the protected production environment approval. The edge function was already deployed directly through authorized Supabase connection; do not interpret the waiting redundant workflow as an Edge Function failure.
+- **Remaining**: authenticated browser cross-app read/add/toggle test and unauthorized request rejection verification; do not mark end-to-end DONE until observed.
