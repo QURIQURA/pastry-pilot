@@ -630,6 +630,9 @@ function FormulaDetailPage() {
       // 이름 / component
       const formulaPatch: { name?: string; component_id?: string | null } = {};
       const trimmedName = draft.name.trim();
+      if (readCanonicalFormulaName(formula.data.name) && !trimmedName) {
+        throw new Error("Enter a valid flavour, texture, and product type before saving.");
+      }
       if (trimmedName && trimmedName !== formula.data.name) formulaPatch.name = trimmedName;
       if (draft.componentId !== (formula.data.component_id ?? ""))
         formulaPatch.component_id = draft.componentId || null;
