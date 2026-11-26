@@ -29,6 +29,7 @@ import { cn } from "@/lib/utils";
 import {
   currentUserId,
   formulasQuery,
+  techniqueCategoriesQuery,
   formulaExperimentsQuery,
   mouldsQuery,
   baseWeightsQuery,
@@ -631,6 +632,7 @@ export function AddFormulaVersionForm({
   cakeSizeId?: string | null;
 }) {
   const formulas = useQuery(formulasQuery());
+  const techniqueCategories = useQuery(techniqueCategoriesQuery());
   const queryClient = useQueryClient();
   const formulaList = formulas.data ?? [];
   const [formulaId, setFormulaId] = useState("");
