@@ -23,6 +23,7 @@ import { ingredientDisplayName } from "@/lib/pilot";
 import { mouldAbbr, mouldMultiplierForRecipe, mouldQtyForRecipe } from "@/lib/component-size";
 import { invalidateProductionSync } from "@/lib/production-sync";
 import { syncWorkSessionToPlanner } from "@/lib/work-session";
+import { nowLocalTime, toLocalDateString } from "@/lib/datetime";
 import { buttonClass, inputClass, selectClass } from "./ui";
 
 const fromRow = (row: WorkSessionFormulaVersionRow) => ({
@@ -50,12 +51,15 @@ export function OrderComponentPlanRow({
   disabled = false,
   allowFormulaChange = false,
   section,
+  startNow = false,
   onClose,
 }: {
   row: WorkSessionFormulaVersionRow;
   disabled?: boolean;
   allowFormulaChange?: boolean;
   section?: "schedule" | "mould";
+  /** 바로 시작(2026-11-27): 열리자마자 현재 날짜·시각(시드니)으로 일정을 저장하고 닫는다. */
+  startNow?: boolean;
   onClose?: () => void;
 }) {
   const client = useQueryClient();
@@ -115,10 +119,11 @@ export function OrderComponentPlanRow({
   const schedDirty = JSON.stringify(sched) !== schedBase.current;
   const scheduleConflict = schedDirty && schedRevision.current !== scheduleRevision;
   const saveSched = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (override?: typeof sched) => {
+      const sched_ = override ?? sched;
       if (lockedSched || scheduleConflict)
         throw new Error("일정이 변경됐어요. 최신 일정을 확인해 주세요.");
-      if (!sched.start) {
+      if (!sched_.start) {
         if (oneBlock?.work_session_task_id) {
           const { data: task, error } = await supabase
             .from("work_session_tasks")
@@ -153,7 +158,7 @@ export function OrderComponentPlanRow({
         }
         const { error } = await supabase
           .from("work_session_formula_versions")
-          .update({ planned_date: sched.date || null })
+          .update({ planned_date: sched_.date || null })
           .eq("id", row.id);
         if (error) throw error;
         if (oneBlock) {
@@ -164,10 +169,10 @@ export function OrderComponentPlanRow({
         }
         return;
       }
-      if (!sched.date) throw new Error("시작 시간을 지정하려면 날짜도 필요합니다");
-      const dur = Number(sched.dur);
+      if (!sched_.date) throw new Error("시작 시간을 지정하려면 날짜도 필요합니다");
+      const dur = Number(sched_.dur);
       if (!(dur >= 15)) throw new Error("작업 시간은 15분 이상으로 입력하세요");
-      const s = minOf(sched.start);
+      const s = minOf(sched_.start);
       const e = s + dur;
       // 2026-11-13: 시간대 제한 없음 — 하루(00:00–24:00) 안이면 어느 시간이든 배정한다.
       if (s < 0 || e > 24 * 60)
@@ -178,7 +183,7 @@ export function OrderComponentPlanRow({
         const { error } = await supabase
           .from("work_blocks")
           .update({
-            block_date: sched.date,
+            block_date: sched_.date,
             start_time: t(s),
             end_time: t(e),
             updated_at: new Date().toISOString(),
@@ -190,7 +195,7 @@ export function OrderComponentPlanRow({
         const { error } = await supabase.from("work_blocks").insert({
           user_id,
           work_session_formula_version_id: row.id,
-          block_date: sched.date,
+          block_date: sched_.date,
           start_time: t(s),
           end_time: t(e),
           part_no: 1,
@@ -204,8 +209,10 @@ export function OrderComponentPlanRow({
       if (planError) throw planError;
       await syncWorkSessionToPlanner(row.work_session_id);
     },
-    onSuccess: async () => {
-      schedBase.current = JSON.stringify(sched);
+    onSuccess: async (_data, override) => {
+      const saved = override ?? sched;
+      schedBase.current = JSON.stringify(saved);
+      if (override) setSched(saved);
       await client.invalidateQueries({ queryKey: ["work_blocks"] });
       await client.invalidateQueries({ queryKey: ["dashboard_components"] });
       await client.invalidateQueries({
@@ -213,6 +220,21 @@ export function OrderComponentPlanRow({
       });
     },
   });
+  // 바로 시작: 현재 시드니 날짜·시각으로 채운다(길이는 기존 값, 비어 있으면 60분).
+  const nowSched = () => ({
+    date: toLocalDateString(),
+    start: nowLocalTime().replace(/^24:/, "00:"),
+    dur: sched.dur || "60",
+  });
+  const startedNow = useRef(false);
+  useEffect(() => {
+    if (!startNow || startedNow.current || !blocksQ.isSuccess || lockedSched || disabled) return;
+    startedNow.current = true;
+    const next = nowSched();
+    setSched(next);
+    saveSched.mutate(next, { onSuccess: () => onClose?.() });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startNow, blocksQ.isSuccess, lockedSched, disabled]);
   const formulas = useQuery({ ...formulasQuery(), enabled: allowFormulaChange });
   const techniques = useQuery({ ...techniqueCategoriesQuery(), enabled: allowFormulaChange });
   const choices = (formulas.data ?? []).filter(
@@ -554,6 +576,14 @@ export function OrderComponentPlanRow({
             onChange={(e) => setSched((v) => ({ ...v, dur: e.target.value }))}
           />
         </label>
+        <button
+          type="button"
+          className={buttonClass}
+          title="현재 날짜와 시각으로 채우기"
+          onClick={() => setSched(nowSched())}
+        >
+          지금
+        </button>
       </div>
     </div>
   );
