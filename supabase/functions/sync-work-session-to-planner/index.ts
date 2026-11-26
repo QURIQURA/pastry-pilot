@@ -463,10 +463,19 @@ Deno.serve(async (req: Request) => {
         if (taskId && owner !== order.id) protectedIds.add(taskId);
       };
       for (const row of daily.data ?? []) protect(row.planner_task_id, row.order_id);
-      for (const row of selections.data ?? []) {
+      type SessionReference = { order_id: string | null };
+      type SelectionReference = { work_sessions: SessionReference | null };
+      const selectionReferences = selections.data as unknown as Array<
+        SelectionReference & { planner_task_id: string | null }
+      > | null;
+      const blockReferences = blocks.data as unknown as Array<{
+        planner_task_id: string | null;
+        work_session_formula_versions: SelectionReference | null;
+      }> | null;
+      for (const row of selectionReferences ?? []) {
         protect(row.planner_task_id, row.work_sessions?.order_id);
       }
-      for (const row of blocks.data ?? []) {
+      for (const row of blockReferences ?? []) {
         protect(row.planner_task_id, row.work_session_formula_versions?.work_sessions?.order_id);
       }
       const scopedIds = ids.filter((id) => !protectedIds.has(id));
