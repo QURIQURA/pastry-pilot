@@ -11,7 +11,7 @@ export function buildProductionOrderCards<
   S extends { id: string; order_id: string | null; status: string },
 >(orders: O[], components: R[], sessions: S[], completed: boolean) {
   return orders
-    .filter((o) => (o.status === "COMPLETED") === completed)
+    .filter((o) => o.status !== "REJECTED" && (o.status === "COMPLETED") === completed)
     .map((order) => {
       const linked = sessions.filter((s) => s.order_id === order.id && s.status !== "CANCELLED");
       return {

@@ -58,3 +58,14 @@ test("completed history stays separate and cancelled sessions cannot hijack a li
   )[0];
   assert.equal(row.session.id, "active");
 });
+test("rejected pop-ups leave both the in-progress and history production lists (#71)", () => {
+  const orders = [order("live"), order("done", "COMPLETED"), order("rej", "REJECTED")];
+  assert.deepEqual(
+    buildProductionOrderCards(orders, [], [], false).map((r) => r.order.id),
+    ["live"],
+  );
+  assert.deepEqual(
+    buildProductionOrderCards(orders, [], [], true).map((r) => r.order.id),
+    ["done"],
+  );
+});

@@ -2,7 +2,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { pilotSettingsQuery, type OrderListRow } from "@/lib/queries";
 import { readPopupPlan } from "@/lib/popup";
-import { popupStageColor, popupStageId, readPopupStages } from "@/lib/popup-workflow";
+import {
+  popupStageColor,
+  popupStageId,
+  readPopupStages,
+  REJECTED_STAGE,
+} from "@/lib/popup-workflow";
 import { invalidateProductionSync } from "@/lib/production-sync";
 import { selectClass } from "./ui";
 export function PopupStagePicker({
@@ -38,7 +43,7 @@ export function PopupStagePicker({
         disabled={disabled || settings.isLoading || settings.isError}
         onChange={(e) => onChange(e.target.value)}
       >
-        {value && !stages.some((s) => s.id === value) && (
+        {value && value !== REJECTED_STAGE.id && !stages.some((s) => s.id === value) && (
           <option value={value}>{value} (저장된 단계)</option>
         )}
         {stages.map((s) => (
@@ -46,6 +51,9 @@ export function PopupStagePicker({
             {s.label}
           </option>
         ))}
+        {/* 반려: 진행 단계와 별도. 메모는 남고 번호는 SND-REJ-nnn으로 바뀐다(#71). */}
+        <option disabled>──────</option>
+        <option value={REJECTED_STAGE.id}>{REJECTED_STAGE.label}</option>
       </select>
     </div>
   );

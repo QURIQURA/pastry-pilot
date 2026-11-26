@@ -65,3 +65,40 @@ create table if not exists public.work_session_formula_versions (
   capacity_qty numeric,
   multiplier numeric not null default 1
 );
+
+-- pastry-pilot#71: pop-up columns, settings and audit log used by the REJECTED pop-up migration.
+alter table public.orders add column if not exists order_kind text not null default 'CAKE';
+alter table public.orders add column if not exists order_number text;
+alter table public.orders add column if not exists status text not null default 'INTAKE';
+alter table public.orders add column if not exists popup_plan jsonb not null default '{}'::jsonb;
+alter table public.orders add column if not exists pickup_at timestamptz;
+alter table public.orders add column if not exists event_date date;
+alter table public.orders add column if not exists updated_at timestamptz not null default now();
+alter table public.orders alter column id set default gen_random_uuid();
+create table if not exists public.pilot_settings (
+  user_id uuid primary key,
+  popup_workflow jsonb not null default '[{"id":"PLANNING","label":"CONFIRMED"},{"id":"PREPARING","label":"MENU PLANNING"},{"id":"COMPLETED","label":"COMPLETED"}]'::jsonb,
+  popup_next_number integer not null default 1
+);
+create table if not exists public.order_production_sync_log (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null,
+  order_id uuid,
+  source text not null,
+  before_value jsonb,
+  after_value jsonb
+);
+-- Pre-baseline RPC (20261105084410), unchanged by later migrations; the pop-up SQL test calls it.
+create or replace function public.save_popup_stage(p_order_id uuid,p_stage_id text,p_expected_updated_at timestamptz)
+returns jsonb language plpgsql security invoker set search_path='' as $$
+declare old_order public.orders%rowtype; saved public.orders%rowtype;
+begin
+  select * into old_order from public.orders where id=p_order_id and user_id=auth.uid() and order_kind='POPUP' for update;
+  if not found then raise exception '팝업에 접근할 수 없습니다'; end if;
+  if p_expected_updated_at is null or old_order.updated_at<>p_expected_updated_at then raise exception '다른 화면에서 변경됐습니다. 최신 값을 불러오세요'; end if;
+  update public.orders set popup_plan=jsonb_set(popup_plan,'{stage_id}',to_jsonb(p_stage_id)) where id=p_order_id and user_id=auth.uid() returning * into saved;
+  insert into public.order_production_sync_log(user_id,order_id,source,before_value,after_value)
+    values(auth.uid(),p_order_id,'popup_stage',to_jsonb(old_order),to_jsonb(saved));
+  return to_jsonb(saved);
+end; $$;
+grant execute on function public.save_popup_stage(uuid,text,timestamptz) to authenticated;

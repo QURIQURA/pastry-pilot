@@ -737,6 +737,7 @@ function OrderRow({
           o.is_in_progress
             ? "border-l-amber-400 bg-amber-50 hover:bg-amber-100"
             : "border-l-transparent hover:bg-secondary",
+          o.status === "REJECTED" && "opacity-60",
         )}
         style={{ gridTemplateColumns }}
       >

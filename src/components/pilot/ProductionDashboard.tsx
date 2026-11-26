@@ -237,7 +237,7 @@ export function ProductionDashboard() {
   }, [rows]);
 
   const isActive = (r: DashboardComponentRow) =>
-    r.order.status !== "COMPLETED" && r.order.status !== "CANCELLED";
+    !["COMPLETED", "CANCELLED", "REJECTED"].includes(r.order.status);
 
   const poolGroups = useMemo(() => {
     const groups = new Map<
