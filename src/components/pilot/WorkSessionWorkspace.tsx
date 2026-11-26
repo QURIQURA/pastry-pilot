@@ -29,12 +29,12 @@ import { cn } from "@/lib/utils";
 import {
   currentUserId,
   formulasQuery,
+  techniqueCategoriesQuery,
   formulaExperimentsQuery,
   mouldsQuery,
   baseWeightsQuery,
   productsQuery,
   cakeSizesQuery,
-  techniqueCategoriesQuery,
   versionIngredientsBulkQuery,
   versionIngredientsQuery,
   workSessionChildSelectionsQuery,
@@ -60,7 +60,7 @@ import {
   mouldBatchGrams,
   formatMouldSplit,
 } from "@/lib/production-quantity";
-import { resolveSlotGroup } from "@/lib/technique";
+import { FormulaPicker } from "./FormulaPicker";
 import { mouldAbbr, mouldQty, mouldMultiplierForRecipe } from "@/lib/component-size";
 import { AdjustInput, ScaleAllPanel } from "@/components/pilot/RecipeScaleControls";
 import { round2, type ScaleMode } from "@/lib/recipe-scale";
@@ -632,19 +632,9 @@ export function AddFormulaVersionForm({
   cakeSizeId?: string | null;
 }) {
   const formulas = useQuery(formulasQuery());
-  const queryClient = useQueryClient();
-  // 2026-10-12 사용자 요청: CORE(SHEET/CREAM/FILLING) 슬롯에서 추가할 때는 TECHNIQUE
-  // CATEGORIES에서 그 슬롯으로 분류된 COMPONENT의 FORMULA만 보여준다. DECORATIVE(자유 추가)는
-  // 기존처럼 전체를 다 보여준다.
   const techniqueCategories = useQuery(techniqueCategoriesQuery());
-  const formulaList = (formulas.data ?? []).filter((f) => {
-    if (!slot) return true;
-    // 2026-10-12 사용자 발견: COMPONENT에 연결 안 된 FORMULA(예: Tiramisu Mousse)는
-    // components?.technique_category_id가 없어서 늘 빠졌다 — FORMULA 자체의
-    // technique_category_id도 폴백으로 같이 봐야 CORE 슬롯에 정상적으로 뜬다.
-    const catId = f.components?.technique_category_id ?? f.technique_category_id ?? null;
-    return resolveSlotGroup(techniqueCategories.data ?? [], catId) === slot;
-  });
+  const queryClient = useQueryClient();
+  const formulaList = formulas.data ?? [];
   const [formulaId, setFormulaId] = useState("");
   // Select the production quantity before ADD; the selection is saved once.
   const [planMode, setPlanMode] = useState<"MULT" | "MOULD" | "BASE" | "ING">("MULT");
@@ -789,13 +779,14 @@ export function AddFormulaVersionForm({
       }}
     >
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <Field label="FORMULA">
-          <select
-            className={selectClass}
+        <div>
+          <p className="label-caps mb-1 text-xs">FORMULA</p>
+          <FormulaPicker
+            slot={slot ?? "OTHER"}
             value={formulaId}
             disabled={add.isPending}
-            onChange={(e) => {
-              const id = e.target.value;
+            allowEmpty={false}
+            onChange={(id) => {
               if (!addOnSelect) {
                 setFormulaId(id);
                 return;
@@ -803,16 +794,8 @@ export function AddFormulaVersionForm({
               const picked = formulaList.find((item) => item.id === id);
               if (picked) add.mutate(picked);
             }}
-            required
-          >
-            <option value="">SELECT FORMULA…</option>
-            {formulaList.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.components?.name ?? f.name}
-              </option>
-            ))}
-          </select>
-        </Field>
+          />
+        </div>
       </div>
       {!addOnSelect && versionId && (
         <div className="space-y-2 border border-border p-3">
@@ -1818,10 +1801,19 @@ function WeighingMatrixCell({
       </button>
       {cell.lineNote?.trim() && (
         <span className="group/note relative ml-1 inline-flex shrink-0 items-center">
-          <span tabIndex={0} role="note" aria-label={`재료 메모: ${cell.lineNote}`}
+          <span
+            tabIndex={0}
+            role="note"
+            aria-label={`재료 메모: ${cell.lineNote}`}
             className="cursor-help rounded-sm border border-border px-1 text-[10px] text-muted-foreground focus:outline-2 focus:outline-offset-1 focus:outline-foreground"
-            title={cell.lineNote}>💬</span>
-          <span role="tooltip" className="pointer-events-none absolute bottom-full left-0 z-50 mb-1 hidden w-max max-w-64 whitespace-pre-wrap border border-border bg-popover p-2 text-xs leading-relaxed text-popover-foreground shadow-lg group-hover/note:block group-focus-within/note:block">
+            title={cell.lineNote}
+          >
+            💬
+          </span>
+          <span
+            role="tooltip"
+            className="pointer-events-none absolute bottom-full left-0 z-50 mb-1 hidden w-max max-w-64 whitespace-pre-wrap border border-border bg-popover p-2 text-xs leading-relaxed text-popover-foreground shadow-lg group-hover/note:block group-focus-within/note:block"
+          >
             {cell.lineNote}
           </span>
         </span>

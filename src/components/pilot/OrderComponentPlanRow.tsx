@@ -8,15 +8,13 @@ import {
   baseWeightsQuery,
   capacitiesQuery,
   sizeSpecLinesQuery,
-  formulasQuery,
   mouldsQuery,
-  techniqueCategoriesQuery,
   versionIngredientsQuery,
   workBlocksQuery,
   type WorkSessionFormulaVersionRow,
 } from "@/lib/queries";
 import { parseComponentPlan, productionDemandSummary } from "@/lib/order-component-plan";
-import { resolveSlotGroup } from "@/lib/technique";
+import { FormulaPicker } from "./FormulaPicker";
 import { sumBaseGrams } from "@/lib/work-session";
 import { fmtNumber, toGrams } from "@/lib/formula";
 import { ingredientDisplayName } from "@/lib/pilot";
@@ -213,16 +211,6 @@ export function OrderComponentPlanRow({
       });
     },
   });
-  const formulas = useQuery({ ...formulasQuery(), enabled: allowFormulaChange });
-  const techniques = useQuery({ ...techniqueCategoriesQuery(), enabled: allowFormulaChange });
-  const choices = (formulas.data ?? []).filter(
-    (f) =>
-      f.id === draft.formula ||
-      resolveSlotGroup(
-        techniques.data ?? [],
-        f.components?.technique_category_id ?? f.technique_category_id,
-      ) === row.slot,
-  );
   const versions = useQuery({
     queryKey: ["formula_versions", "order-plan", draft.formula],
     queryFn: async () => {
@@ -654,29 +642,18 @@ export function OrderComponentPlanRow({
       {editing && (
         <fieldset disabled={disabled || save.isPending} className="space-y-2">
           {allowFormulaChange && (
-            <label className="block text-[11px]">
+            <div className="block text-[11px]">
               컴포넌트 / FORMULA 교체
-              <select
-                aria-label="컴포넌트 교체"
-                className={selectClass}
+              <FormulaPicker
+                slot={row.slot ?? "OTHER"}
                 value={draft.formula}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, formula: e.target.value, version: "", pinned: true }))
+                allowEmpty={false}
+                fallbackLabel={row.formula_versions.formulas.name}
+                onChange={(formula) =>
+                  setDraft((d) => ({ ...d, formula, version: "", pinned: true }))
                 }
-              >
-                {!choices.some((f) => f.id === draft.formula) && (
-                  <option value={draft.formula}>
-                    {row.formula_versions.formulas.components?.name ??
-                      row.formula_versions.formulas.name}
-                  </option>
-                )}
-                {choices.map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {f.components?.name ?? f.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+              />
+            </div>
           )}
           <p className="font-mono text-[11px] text-muted-foreground">
             레시피는 항상 최신 버전(V
