@@ -7,6 +7,7 @@ import { CakeSizeMouldPairs } from "@/components/pilot/CakeSizeMouldPairs";
 import { MouldManager } from "@/components/pilot/MouldManager";
 import { PastryMeasurementGuide } from "@/components/pilot/PastryMeasurementGuide";
 import { CakeSizeManager } from "@/components/pilot/CakeSizeManager";
+import { CustomSpecManager } from "@/components/pilot/CustomSpecManager";
 import { SizeSpecManager } from "@/components/pilot/SizeSpecManager";
 import { BaseWeightManager } from "@/components/pilot/BaseWeightManager";
 import { TechniqueCategoryManager } from "@/components/pilot/TechniqueCategoryManager";
@@ -136,8 +137,10 @@ function SettingsPage() {
         </div>
         {/* 2026-11-05: 공용 완성 규격 ↔ 시트 몰드를 나란히 놓고 비교하며 정리한다(좁은 화면에서는 위아래). */}
         <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-2">
-          <div className="min-w-0">
+          <div className="min-w-0 space-y-3">
             <CakeSizeManager />
+            {/* 2026-11-26 (Issue #69): 공용 완성 규격 하위 CUSTOM — 멀티레이어 × 레이어별 컴포넌트 세트 */}
+            <CustomSpecManager />
           </div>
           <div className="min-w-0">
             <MouldManager />

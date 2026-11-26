@@ -1135,9 +1135,10 @@ function OrderDetailPage() {
                 <p className="text-sm">
                   {(() => {
                     const c = (cakeSizes.data ?? []).find((v) => v.id === cakeSizeId);
-                    return c
-                      ? `${c.name} · ${formatProductSizeLabel({ ...c, shape: c.shape ?? "" })}`
-                      : "미지정";
+                    if (!c) return "미지정";
+                    if (c.kind === "CUSTOM") return `CUSTOM · ${c.name}`;
+                    const abbr = formatProductSizeLabel({ ...c, shape: c.shape ?? "" });
+                    return abbr ? `${c.name} · ${abbr}` : c.name;
                   })()}
                 </p>
                 <Link
