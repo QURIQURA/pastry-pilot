@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { loadTs } from "./load-ts.mjs";
 
-const { filterFormulaCandidates } = await loadTs("src/lib/formula-picker.ts");
+const { filterFormulaCandidates, hasLatestVersionDietaryTag } = await loadTs(
+  "src/lib/formula-picker.ts",
+);
 const techniques = [
   { id: "pastry", slot_group: "SHEET" },
   { id: "sponge", parent_id: "pastry", slot_group: null },
@@ -36,4 +38,27 @@ test("keeps the linked formula visible through role and text filters", () => {
   assert.deepEqual(ids("SHEET", "2", "no match"), ["2"]);
   assert.deepEqual(ids("SHEET", "", " vanilla ", "all"), ["2", "1"]);
   assert.deepEqual(ids("SHEET", "", "legacy", "unclassified"), ["4"]);
+});
+
+test("a dietary tag on an earlier version does not qualify the newest version", () => {
+  const versions = [
+    { id: "new", version_number: 2 },
+    { id: "old", version_number: 1 },
+  ];
+  assert.equal(
+    hasLatestVersionDietaryTag(
+      versions,
+      [{ formula_version_id: "old", dietary_tag_id: "df" }],
+      "df",
+    ),
+    false,
+  );
+  assert.equal(
+    hasLatestVersionDietaryTag(
+      versions,
+      [{ formula_version_id: "new", dietary_tag_id: "df" }],
+      "df",
+    ),
+    true,
+  );
 });
