@@ -4,7 +4,7 @@ interface FormulaCandidate {
   id: string;
   name: string;
   technique_category_id: string | null;
-  components?: { technique_category_id: string | null } | null;
+  components?: { technique_category_id: string | null; name?: string } | null;
 }
 
 export function classifyFormulaForSlot(
@@ -14,7 +14,7 @@ export function classifyFormulaForSlot(
 ) {
   const group = resolveSlotGroup(
     categories,
-    formula.technique_category_id ?? formula.components?.technique_category_id,
+    formula.components?.technique_category_id ?? formula.technique_category_id,
   );
   switch (slot) {
     case "SHEET":
@@ -43,8 +43,27 @@ export function filterFormulaCandidates<T extends FormulaCandidate>(
   return formulas
     .filter((formula) => {
       if (formula.id === selected) return true;
-      if (!formula.name.normalize("NFKC").toLocaleLowerCase().includes(query)) return false;
+      const labels = [formula.name, formula.components?.name ?? ""];
+      if (!labels.some((label) => label.normalize("NFKC").toLocaleLowerCase().includes(query)))
+        return false;
       return scope === "all" || classifyFormulaForSlot(formula, categories, slot) === scope;
     })
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** For selectors that use latest-by-number, only declarations on that exact version qualify. */
+export function hasLatestVersionDietaryTag(
+  versions: readonly { id: string; version_number: number }[],
+  links: readonly { formula_version_id: string; dietary_tag_id: string }[],
+  tagId: string,
+) {
+  const latest = versions.reduce<(typeof versions)[number] | undefined>(
+    (current, version) =>
+      !current || version.version_number > current.version_number ? version : current,
+    undefined,
+  );
+  return Boolean(
+    latest &&
+    links.some((link) => link.formula_version_id === latest.id && link.dietary_tag_id === tagId),
+  );
 }
