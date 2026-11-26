@@ -77,6 +77,132 @@ export type Database = {
         }
         Relationships: []
       }
+      cake_size_layer_components: {
+        Row: {
+          created_at: string
+          formula_id: string | null
+          id: string
+          label: string
+          layer_id: string
+          mould_id: string | null
+          mould_qty: number
+          notes: string | null
+          slot: string
+          sort_order: number
+          target_g: number | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          formula_id?: string | null
+          id?: string
+          label?: string
+          layer_id: string
+          mould_id?: string | null
+          mould_qty?: number
+          notes?: string | null
+          slot?: string
+          sort_order?: number
+          target_g?: number | null
+          updated_at?: string
+          user_id?: string
+        }
+        Update: {
+          created_at?: string
+          formula_id?: string | null
+          id?: string
+          label?: string
+          layer_id?: string
+          mould_id?: string | null
+          mould_qty?: number
+          notes?: string | null
+          slot?: string
+          sort_order?: number
+          target_g?: number | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cake_size_layer_components_formula_id_fkey"
+            columns: ["formula_id"]
+            isOneToOne: false
+            referencedRelation: "formulas"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cake_size_layer_components_layer_id_fkey"
+            columns: ["layer_id"]
+            isOneToOne: false
+            referencedRelation: "cake_size_layers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cake_size_layer_components_mould_id_fkey"
+            columns: ["mould_id"]
+            isOneToOne: false
+            referencedRelation: "moulds"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cake_size_layers: {
+        Row: {
+          cake_size_id: string
+          created_at: string
+          height_mm: number | null
+          id: string
+          label: string
+          length_mm: number | null
+          notes: string | null
+          shape: string | null
+          size_inch: number | null
+          sort_order: number
+          updated_at: string
+          user_id: string
+          width_mm: number | null
+        }
+        Insert: {
+          cake_size_id: string
+          created_at?: string
+          height_mm?: number | null
+          id?: string
+          label?: string
+          length_mm?: number | null
+          notes?: string | null
+          shape?: string | null
+          size_inch?: number | null
+          sort_order?: number
+          updated_at?: string
+          user_id?: string
+          width_mm?: number | null
+        }
+        Update: {
+          cake_size_id?: string
+          created_at?: string
+          height_mm?: number | null
+          id?: string
+          label?: string
+          length_mm?: number | null
+          notes?: string | null
+          shape?: string | null
+          size_inch?: number | null
+          sort_order?: number
+          updated_at?: string
+          user_id?: string
+          width_mm?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cake_size_layers_cake_size_id_fkey"
+            columns: ["cake_size_id"]
+            isOneToOne: false
+            referencedRelation: "cake_sizes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cake_sizes: {
         Row: {
           cream_g: number | null

@@ -16,14 +16,16 @@ import { buttonClass, inputClass, selectClass } from "./ui";
 /** 이름이 이미 약어(Ø8″-H10)면 한 번만 보여준다 */
 const sizeText = (c: {
   name: string;
+  kind?: string;
   shape: string | null;
   diameter_mm: number | null;
   length_mm: number | null;
   width_mm: number | null;
   height_mm: number | null;
 }) => {
+  if (c.kind === "CUSTOM") return `CUSTOM · ${c.name}`;
   const abbr = formatProductSizeLabel({ ...c, shape: c.shape ?? "" });
-  return c.name === abbr ? abbr : `${c.name} · ${abbr}`;
+  return !abbr || c.name === abbr ? c.name : `${c.name} · ${abbr}`;
 };
 
 const stateFor = (order: OrderListRow) => ({
@@ -168,12 +170,24 @@ export function ProductionOrderSizeEditor({
             >
               <option value="">미지정</option>
               {(standards.data ?? [])
-                .filter((s) => s.kind !== "FREE" || s.id === draft.standard)
+                .filter((s) => s.kind === "CAKE" || (s.kind === "FREE" && s.id === draft.standard))
                 .map((s) => (
                   <option key={s.id} value={s.id}>
                     {sizeText(s)} · #{s.id.slice(0, 8)}
                   </option>
                 ))}
+              {/* 2026-11-26 (Issue #69): SETTINGS에서 만든 CUSTOM 멀티레이어 규격 */}
+              {(standards.data ?? []).some((s) => s.kind === "CUSTOM") && (
+                <optgroup label="CUSTOM">
+                  {(standards.data ?? [])
+                    .filter((s) => s.kind === "CUSTOM")
+                    .map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} · #{s.id.slice(0, 8)}
+                      </option>
+                    ))}
+                </optgroup>
+              )}
             </select>
           </label>
           <label className="block">

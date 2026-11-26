@@ -35,7 +35,12 @@ create table if not exists public.work_sessions (
 create table if not exists public.cake_sizes (
   id uuid primary key,
   user_id uuid not null,
-  sheet_mould_id uuid
+  sheet_mould_id uuid,
+  kind text not null default 'CAKE' -- live since 20261113140000_cake_sizes_free_form
+);
+create table if not exists public.formulas (
+  id uuid primary key,
+  user_id uuid not null
 );
 create table if not exists public.formula_versions (
   id uuid primary key,

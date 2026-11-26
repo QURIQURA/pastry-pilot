@@ -33,6 +33,8 @@ export function SizeSpecManager() {
   const lines = useQuery(sizeSpecLinesQuery());
   const capacities = useQuery(capacitiesQuery());
   const capList = capacities.data ?? [];
+  // CUSTOM(멀티레이어) 규격은 레이어별 컴포넌트로 정의하므로 여기서 제외한다(Issue #69).
+  const sizeRows = (sizes.data ?? []).filter((s) => s.kind !== "CUSTOM");
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["size_spec_lines"] });
 
   const add = useMutation({
@@ -70,7 +72,7 @@ export function SizeSpecManager() {
         숫자는 나중에 채워도 돼요. 주문의 컴포넌트 설정에서 이 줄을 눌러 그대로 적용할 수 있어요.
       </p>
       <div className="space-y-3">
-        {(sizes.data ?? []).map((size) => {
+        {sizeRows.map((size) => {
           const sizeLines = (lines.data ?? []).filter((l) => l.cake_size_id === size.id);
           const total = sizeLines.reduce(
             (sum, l) =>

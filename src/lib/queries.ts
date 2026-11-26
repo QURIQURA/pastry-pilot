@@ -2610,6 +2610,24 @@ export const sizeSpecLinesQuery = () =>
       unwrap(await supabase.from("size_spec_lines").select("*").order("sort_order")),
   });
 
+// 2026-11-26 (Issue #69): CUSTOM 멀티레이어 규격 — 레이어(cake_size_layers)와 레이어별 컴포넌트 줄
+export type CakeSizeLayer = Tables<"cake_size_layers">;
+export type CakeSizeLayerComponent = Tables<"cake_size_layer_components">;
+
+export const cakeSizeLayersQuery = () =>
+  queryOptions({
+    queryKey: ["cake_size_layers"],
+    queryFn: async (): Promise<CakeSizeLayer[]> =>
+      unwrap(await supabase.from("cake_size_layers").select("*").order("sort_order")),
+  });
+
+export const cakeSizeLayerComponentsQuery = () =>
+  queryOptions({
+    queryKey: ["cake_size_layer_components"],
+    queryFn: async (): Promise<CakeSizeLayerComponent[]> =>
+      unwrap(await supabase.from("cake_size_layer_components").select("*").order("sort_order")),
+  });
+
 /** 몰드 + 기준중량 통합 목록(capacities) */
 export const capacitiesQuery = () =>
   queryOptions({

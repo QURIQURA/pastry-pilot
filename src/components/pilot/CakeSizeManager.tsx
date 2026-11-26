@@ -113,7 +113,7 @@ export function CakeSizeManager() {
   // 2026-10-20 사용자 요청: 위/아래로 순서 조정 — 현재 순서를 0..n-1로 다시 매기며 두 칸을 맞바꾼다.
   const move = useMutation({
     mutationFn: async ({ index, dir }: { index: number; dir: -1 | 1 }) => {
-      const list = [...(sizes.data ?? [])];
+      const list = [...rows];
       const target = index + dir;
       if (target < 0 || target >= list.length) return;
       const a = list[index];
@@ -158,7 +158,8 @@ export function CakeSizeManager() {
     onSuccess: invalidate,
   });
 
-  const rows = sizes.data ?? [];
+  // CUSTOM(멀티레이어) 규격은 아래 CustomSpecManager에서 따로 관리한다.
+  const rows = (sizes.data ?? []).filter((s) => s.kind !== "CUSTOM");
   const usageMap = usage.data ?? {};
   const mouldRows = mouldList.data ?? [];
 
@@ -167,7 +168,7 @@ export function CakeSizeManager() {
   const autoTried = useRef(new Set<string>());
   useEffect(() => {
     for (const size of rows) {
-      if (size.kind === "FREE" || size.sheet_mould_id || autoTried.current.has(size.id)) continue;
+      if (size.kind !== "CAKE" || size.sheet_mould_id || autoTried.current.has(size.id)) continue;
       const found = candidateMoulds(size, mouldRows);
       if (found.length === 1) {
         autoTried.current.add(size.id);
