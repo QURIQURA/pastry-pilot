@@ -57,6 +57,7 @@ function FormulasPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
+  const [search, setSearch] = useState("");
   const [componentFilter, setComponentFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [creating, setCreating] = useState(false);
@@ -86,7 +87,12 @@ function FormulasPage() {
     openExperiments.map((e) => e.version_id).filter((id): id is string => Boolean(id)),
   );
 
+  const searchTerm = search.trim().normalize("NFKC").toLocaleLowerCase();
   const rows = (formulas.data ?? []).filter((row) => {
+    const labels = [row.name, row.components?.name ?? ""];
+    if (!labels.some((label) => label.normalize("NFKC").toLocaleLowerCase().includes(searchTerm))) {
+      return false;
+    }
     if (componentFilter && row.component_id !== componentFilter) return false;
     // 생산용: 보관/이전 버전뿐인 포뮬라는 보관 탭으로 간다
     const live = (row.formula_versions ?? []).filter(
@@ -194,6 +200,14 @@ function FormulasPage() {
 
       {tab === "PRODUCTION" && (
         <div className="grid grid-cols-1 gap-3 border border-border bg-card p-3 sm:grid-cols-2 lg:grid-cols-3">
+          <Field label="SEARCH FORMULAS">
+            <input
+              type="search"
+              className={inputClass}
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </Field>
           <Field label="COMPONENT">
             <select
               className={selectClass}
