@@ -418,62 +418,149 @@ Deno.serve(async (req: Request) => {
       return json({ error: "unknown mindmap op" }, 400);
     }
 
-    // 2026-11-09 오더 완료 ↔ 플래너 Delivery 양방향 동기화.
-    // - order_delivery { order_id, completed }: 오더 상태가 COMPLETED로 바뀌면 그 오더 WANN 프로젝트
-    //   (orders.wann_project_id) 안 Delivery(is_delivery) TASK를 체크, COMPLETED에서 되돌리면 체크 해제.
-    // - pull_planner_deliveries: 플래너에서 Delivery를 체크했는데 아직 COMPLETED가 아닌 오더를 COMPLETED로 넘긴다
-    //   (WANN은 별도 프로젝트라 푸시할 수 없어서, KORA 앱이 주기적으로 이 호출을 한다).
-    const orderDelivery = body.order_delivery as
-      { order_id?: string; completed?: boolean } | undefined;
-    const legacyCompleteId: string | null = body.complete_order_delivery_id ?? null;
-    if (orderDelivery?.order_id || legacyCompleteId) {
-      const orderId = orderDelivery?.order_id ?? legacyCompleteId!;
-      const completed = orderDelivery ? Boolean(orderDelivery.completed) : true;
-      const { data: ord, error: ordErr } = await kora
+    type LinkedOrder = {
+      id: string;
+      status: string;
+      wann_project_id: string | null;
+      wann_delivery_task_id: string | null;
+    };
+    const orderFields = "id,status,wann_project_id,wann_delivery_task_id";
+    const closeOrderProject = async (order: LinkedOrder) => {
+      const projectId = order.wann_project_id;
+      if (!projectId || order.status !== "COMPLETED") return 0;
+      const { count, error: countError } = await kora
         .from("orders")
-        .select("wann_project_id")
-        .eq("id", orderId)
-        .maybeSingle();
-      if (ordErr) return json({ error: ordErr.message }, 500);
-      if (!ord?.wann_project_id) return json({ ok: true, delivery_changed: 0 });
-      const { data: changed, error: changeErr } = await wann
+        .select("id", { count: "exact", head: true })
+        .eq("wann_project_id", projectId);
+      if (countError) throw countError;
+      if (count !== 1) throw new Error("Order does not own a dedicated Planner project");
+      const { data: candidates, error: taskError } = await wann
         .from("planner_tasks")
-        .update({ completed, completed_at: completed ? new Date().toISOString() : null })
-        .eq("multiple_task_id", ord.wann_project_id)
-        .eq("is_delivery", true)
-        .eq("completed", !completed)
+        .select("id")
+        .eq("multiple_task_id", projectId)
+        .eq("user_id", WANN_USER_ID)
+        .eq("completed", false)
+        .limit(250);
+      if (taskError) throw taskError;
+      const ids = (candidates ?? []).map((task) => task.id);
+      if (!ids.length) return 0;
+      const [daily, selections, blocks] = await Promise.all([
+        kora.from("daily_tasks").select("planner_task_id,order_id").in("planner_task_id", ids),
+        kora
+          .from("work_session_formula_versions")
+          .select("planner_task_id,work_sessions(order_id)")
+          .in("planner_task_id", ids),
+        kora
+          .from("work_blocks")
+          .select("planner_task_id,work_session_formula_versions(work_sessions(order_id))")
+          .in("planner_task_id", ids),
+      ]);
+      if (daily.error || selections.error || blocks.error) {
+        throw daily.error ?? selections.error ?? blocks.error;
+      }
+      const protectedIds = new Set<string>();
+      const protect = (taskId: string | null, owner: string | null | undefined) => {
+        if (taskId && owner !== order.id) protectedIds.add(taskId);
+      };
+      for (const row of daily.data ?? []) protect(row.planner_task_id, row.order_id);
+      type SessionReference = { order_id: string | null };
+      type SelectionReference = { work_sessions: SessionReference | null };
+      const selectionReferences = selections.data as unknown as Array<
+        SelectionReference & { planner_task_id: string | null }
+      > | null;
+      const blockReferences = blocks.data as unknown as Array<{
+        planner_task_id: string | null;
+        work_session_formula_versions: SelectionReference | null;
+      }> | null;
+      for (const row of selectionReferences ?? []) {
+        protect(row.planner_task_id, row.work_sessions?.order_id);
+      }
+      for (const row of blockReferences ?? []) {
+        protect(row.planner_task_id, row.work_session_formula_versions?.work_sessions?.order_id);
+      }
+      const scopedIds = ids.filter((id) => !protectedIds.has(id));
+      if (!scopedIds.length) return 0;
+      const { data: changed, error } = await wann
+        .from("planner_tasks")
+        .update({ completed: true, completed_at: new Date().toISOString() })
+        .eq("user_id", WANN_USER_ID)
+        .eq("multiple_task_id", projectId)
+        .eq("completed", false)
+        .in("id", scopedIds)
         .select("id");
-      if (changeErr) return json({ error: changeErr.message }, 500);
+      if (error) throw error;
+      return changed?.length ?? 0;
+    };
+
+    // Re-read PILOT state so a delayed request cannot reopen a completed project.
+    if (completeOrderId) {
+      const { data: order, error } = await kora
+        .from("orders")
+        .select(orderFields)
+        .eq("id", completeOrderId)
+        .eq("user_id", KORA_OWNER_ID)
+        .maybeSingle();
+      if (error) throw error;
+      if (!order?.wann_project_id) return json({ ok: true, delivery_changed: 0 });
+      if (order.status === "COMPLETED") {
+        return json({ ok: true, delivery_changed: await closeOrderProject(order) });
+      }
+      if (body.order_delivery?.completed !== false || !order.wann_delivery_task_id) {
+        return json({ ok: true, delivery_changed: 0 });
+      }
+      const { data: changed, error: changeError } = await wann
+        .from("planner_tasks")
+        .update({ completed: false, completed_at: null })
+        .eq("id", order.wann_delivery_task_id)
+        .eq("user_id", WANN_USER_ID)
+        .eq("multiple_task_id", order.wann_project_id)
+        .eq("is_delivery", true)
+        .eq("completed", true)
+        .select("id");
+      if (changeError) throw changeError;
       return json({ ok: true, delivery_changed: changed?.length ?? 0 });
     }
-    if (body.pull_planner_deliveries) {
-      const { data: open, error: openErr } = await kora
+    if (pullDeliveries) {
+      const { data: linked, error: linkedError } = await kora
         .from("orders")
-        .select("id, wann_project_id")
+        .select(orderFields)
+        .eq("user_id", KORA_OWNER_ID)
         .not("wann_project_id", "is", null)
-        .not("status", "in", "(COMPLETED,CANCELLED)");
-      if (openErr) return json({ error: openErr.message }, 500);
-      const projectIds = (open ?? []).map((o) => o.wann_project_id as string);
-      if (projectIds.length === 0) return json({ ok: true, completed_orders: 0 });
-      const { data: doneDeliveries, error: pullErr } = await wann
-        .from("planner_tasks")
-        .select("multiple_task_id")
-        .in("multiple_task_id", projectIds)
-        .eq("is_delivery", true)
-        .eq("completed", true);
-      if (pullErr) return json({ error: pullErr.message }, 500);
-      const doneProjects = new Set((doneDeliveries ?? []).map((t) => t.multiple_task_id as string));
-      const orderIds = (open ?? [])
-        .filter((o) => doneProjects.has(o.wann_project_id as string))
-        .map((o) => o.id as string);
-      if (orderIds.length > 0) {
-        const { error: upErr } = await kora
+        .neq("status", "CANCELLED");
+      if (linkedError) throw linkedError;
+      let completedOrders = 0;
+      let closedTasks = 0;
+      for (const order of linked ?? []) {
+        if (order.status === "COMPLETED") {
+          closedTasks += await closeOrderProject(order);
+          continue;
+        }
+        if (!order.wann_delivery_task_id) continue;
+        const { data: delivery, error } = await wann
+          .from("planner_tasks")
+          .select("id")
+          .eq("id", order.wann_delivery_task_id)
+          .eq("user_id", WANN_USER_ID)
+          .eq("multiple_task_id", order.wann_project_id)
+          .eq("is_delivery", true)
+          .eq("completed", true)
+          .maybeSingle();
+        if (error) throw error;
+        if (!delivery) continue;
+        const { data: completedOrder, error: updateError } = await kora
           .from("orders")
           .update({ status: "COMPLETED" })
-          .in("id", orderIds);
-        if (upErr) return json({ error: upErr.message }, 500);
+          .eq("id", order.id)
+          .eq("user_id", KORA_OWNER_ID)
+          .eq("status", order.status)
+          .select(orderFields)
+          .maybeSingle();
+        if (updateError) throw updateError;
+        if (!completedOrder) continue;
+        completedOrders++;
+        closedTasks += await closeOrderProject(completedOrder);
       }
-      return json({ ok: true, completed_orders: orderIds.length });
+      return json({ ok: true, completed_orders: completedOrders, closed_tasks: closedTasks });
     }
 
     const deleteWannTasks = async (ids: string[]) => {
@@ -744,10 +831,15 @@ Deno.serve(async (req: Request) => {
     if (session.order_id) {
       const { data: order, error: orderError } = await kora
         .from("orders")
-        .select("wann_project_id")
+        .select(orderFields)
         .eq("id", session.order_id)
+        .eq("user_id", KORA_OWNER_ID)
         .single();
       if (orderError) throw orderError;
+      if (order.status === "COMPLETED") {
+        const closedTasks = await closeOrderProject(order);
+        return json({ synced: false, reason: "order completed", closed_tasks: closedTasks });
+      }
       orderProjectId = order.wann_project_id;
     } else {
       // 2026-11-06: 팝업 품목에 연결된 세션이면 그 팝업의 WANN 프로젝트 아래로 넣는다(CONFIRMED 때 생성된 프로젝트).
