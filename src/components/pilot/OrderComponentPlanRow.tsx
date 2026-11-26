@@ -645,7 +645,7 @@ export function OrderComponentPlanRow({
             <div className="block text-[11px]">
               컴포넌트 / FORMULA 교체
               <FormulaPicker
-                slot={row.slot}
+                slot={row.slot ?? "OTHER"}
                 value={draft.formula}
                 allowEmpty={false}
                 fallbackLabel={row.formula_versions.formulas.name}
