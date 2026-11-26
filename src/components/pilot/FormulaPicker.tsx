@@ -8,9 +8,19 @@ interface FormulaPickerProps {
   slot: string;
   value: string;
   onChange: (value: string) => void;
+  allowEmpty?: boolean;
+  disabled?: boolean;
+  fallbackLabel?: string;
 }
 
-export function FormulaPicker({ slot, value, onChange }: FormulaPickerProps) {
+export function FormulaPicker({
+  slot,
+  value,
+  onChange,
+  allowEmpty = true,
+  disabled = false,
+  fallbackLabel,
+}: FormulaPickerProps) {
   const formulas = useQuery(formulasQuery());
   const techniques = useQuery(techniqueCategoriesQuery());
   const [search, setSearch] = useState("");
@@ -29,7 +39,7 @@ export function FormulaPicker({ slot, value, onChange }: FormulaPickerProps) {
   const loading = formulas.isPending || techniques.isPending;
 
   return (
-    <div className="min-w-[12rem] flex-1 space-y-1">
+    <fieldset disabled={disabled} className="min-w-[12rem] flex-1 space-y-1">
       <div className="flex flex-wrap gap-1">
         <input
           aria-label={`${slot} recipe search`}
@@ -60,11 +70,18 @@ export function FormulaPicker({ slot, value, onChange }: FormulaPickerProps) {
         disabled={loading || formulas.isError}
         onChange={(event) => onChange(event.target.value)}
       >
-        <option value="">{loading ? "Loading recipes…" : "— RECIPE —"}</option>
-        {value && !selected && <option value={value}>Linked recipe ({value})</option>}
+        <option value="" disabled={!allowEmpty}>
+          {loading ? "Loading recipes…" : "— RECIPE —"}
+        </option>
+        {value && !selected && (
+          <option value={value}>{fallbackLabel ?? `Linked recipe (${value})`}</option>
+        )}
         {options.map((formula) => (
           <option key={formula.id} value={formula.id}>
             {formula.name}
+            {formula.components?.name && formula.components.name !== formula.name
+              ? ` — ${formula.components.name}`
+              : ""}
           </option>
         ))}
       </select>
@@ -81,6 +98,6 @@ export function FormulaPicker({ slot, value, onChange }: FormulaPickerProps) {
           Linked recipe has no role classification.
         </p>
       ) : null}
-    </div>
+    </fieldset>
   );
 }
