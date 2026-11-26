@@ -1,3 +1,4 @@
+import { FormulaNameFields } from "@/components/pilot/FormulaNameFields";
 import { useEffect, useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -346,15 +347,7 @@ function NewFormulaModal({
               onCreate(name.trim(), componentId, techniqueId, methodId, isBase);
           }}
         >
-          <Field label="NAME">
-            <input
-              className={inputClass}
-              autoFocus
-              required
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </Field>
+          <FormulaNameFields onName={setName} />
           <Field label="COMPONENT">
             <select
               className={selectClass}
@@ -407,7 +400,11 @@ function NewFormulaModal({
             V1 DRAFT WILL BE CREATED
           </p>
           <div className="flex gap-2">
-            <button type="submit" className={primaryButtonClass} disabled={pending || !componentId}>
+            <button
+              type="submit"
+              className={primaryButtonClass}
+              disabled={pending || !componentId || !name}
+            >
               CREATE
             </button>
             <button type="button" className={buttonClass} onClick={onCancel}>
