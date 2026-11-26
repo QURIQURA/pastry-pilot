@@ -59,7 +59,7 @@ export function ProductionOrderHeader({
 }
 
 type Selection = WorkSessionFormulaVersionRow;
-type Section = "schedule" | "mould" | "settings" | "merge";
+type Section = "schedule" | "start" | "mould" | "settings" | "merge";
 type Actual = { start: string | null; end: string | null; done: boolean };
 
 export function ProductionComponentTable({
@@ -347,15 +347,27 @@ function ComponentRow({
         </td>
         <td className="font-mono text-muted-foreground">
           {canEditPlan ? (
-            <button
-              type="button"
-              aria-expanded={open === "schedule"}
-              aria-label={`${name} 예정 날짜와 시간 수정`}
-              className="max-w-full text-left underline underline-offset-2 [overflow-wrap:anywhere]"
-              onClick={() => toggle("schedule")}
-            >
-              {recorded ?? "일정 지정"}
-            </button>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <button
+                type="button"
+                aria-expanded={open === "schedule"}
+                aria-label={`${name} 예정 날짜와 시간 수정`}
+                className="max-w-full text-left underline underline-offset-2 [overflow-wrap:anywhere]"
+                onClick={() => toggle("schedule")}
+              >
+                {recorded ?? "일정 지정"}
+              </button>
+              <button
+                type="button"
+                aria-label={`${name} 현재 날짜와 시각으로 바로 시작`}
+                title="현재 날짜와 시각으로 바로 배정"
+                className={productionTableButtonClass}
+                disabled={open === "start"}
+                onClick={() => toggle("start")}
+              >
+                {open === "start" ? "배정 중…" : "▶ 바로 시작"}
+              </button>
+            </div>
           ) : (
             (recorded ?? "—")
           )}
@@ -394,10 +406,16 @@ function ComponentRow({
           )}
         </td>
       </tr>
-      {canEditPlan && (open === "schedule" || open === "mould") && (
+      {canEditPlan && (open === "schedule" || open === "start" || open === "mould") && (
         <tr>
           <td colSpan={5}>
-            <OrderComponentPlanRow key={open} row={row} section={open} onClose={close} />
+            <OrderComponentPlanRow
+              key={open}
+              row={row}
+              section={open === "mould" ? "mould" : "schedule"}
+              startNow={open === "start"}
+              onClose={close}
+            />
           </td>
         </tr>
       )}
