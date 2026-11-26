@@ -12,7 +12,7 @@ export function canonicalFormulaName(flavour: string, texture: string, productTy
 
 export function readCanonicalFormulaName(name: string) {
   const [flavour, texture, productType, ...extra] = name.split(" · ");
-  if (extra.length || !texture || !productType) return null;
+  if (extra.length || !flavour || !texture || !productType) return null;
   if (canonicalFormulaName(flavour, texture, productType) !== name) return null;
   return { flavour, texture, productType };
 }
