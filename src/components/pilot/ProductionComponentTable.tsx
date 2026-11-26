@@ -238,7 +238,7 @@ function ComponentRow({
           other.id !== row.id &&
           other.formulaVersionId === row.formula_version_id &&
           (workDateOf(other.id) ?? other.plannedDate) === day &&
-          !["COMPLETED", "CANCELLED"].includes(other.order.status) &&
+          !["COMPLETED", "CANCELLED", "REJECTED"].includes(other.order.status) &&
           (!batch || batchBySelection.get(other.id) !== batch),
       )
     : [];

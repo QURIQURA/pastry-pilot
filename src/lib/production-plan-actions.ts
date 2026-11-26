@@ -21,7 +21,7 @@ export async function removePlannedComponent(row: WorkSessionFormulaVersionRow) 
       .eq("user_id", uid)
       .single();
     if (error) throw error;
-    if (["COMPLETED", "CANCELLED"].includes(order.status))
+    if (["COMPLETED", "CANCELLED", "REJECTED"].includes(order.status))
       throw new Error("완료·취소된 주문은 변경할 수 없습니다");
   }
   const [blockResult, progressResult, siblingResult] = await Promise.all([

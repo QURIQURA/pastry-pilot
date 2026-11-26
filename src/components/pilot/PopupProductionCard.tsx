@@ -60,7 +60,7 @@ export function PopupProductionCard({ order }: { order: OrderListRow }) {
             sessionId={item.work_session_id}
             productId={item.product_id}
             title={title}
-            readOnly={order.status === "COMPLETED" || order.status === "CANCELLED"}
+            readOnly={["COMPLETED", "CANCELLED", "REJECTED"].includes(order.status)}
           />
         ) : (
           <ProductionComponentTable key={item.id} sessionId="" rows={[]} readOnly title={title} />

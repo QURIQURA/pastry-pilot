@@ -53,3 +53,15 @@ test("blank items, duplicate IDs and invalid checklist groups cannot be saved", 
   assert.ok(validatePopupPlan(p));
   assert.deepEqual(readPopupPlan(null).items, []);
 });
+test("REJECTED is a fixed pop-up stage, never an editable one (#71)", async () => {
+  const w = await loadTs("src/lib/popup-workflow.ts");
+  const stages = w.DEFAULT_POPUP_STAGES;
+  assert.equal(w.popupStageId({ stage_id: "PLANNING" }, "REJECTED", stages), "REJECTED");
+  assert.equal(w.popupStageLabel({ stage_id: "REJECTED" }, "REJECTED", stages), "REJECTED");
+  assert.equal(w.popupStageColor(stages, "REJECTED"), w.REJECTED_COLOR);
+  assert.match(
+    w.validatePopupStages([{ id: "REJECTED", label: "x" }, ...stages]) ?? "",
+    /REJECTED/,
+  );
+  assert.equal(w.validatePopupStages(stages), null);
+});
