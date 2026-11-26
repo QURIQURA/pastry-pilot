@@ -1,7 +1,16 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { classifyFormulaForSlot, filterFormulaCandidates } from "@/lib/formula-picker";
-import { formulasQuery, techniqueCategoriesQuery } from "@/lib/queries";
+import {
+  classifyFormulaForSlot,
+  filterFormulaCandidates,
+  hasLatestVersionDietaryTag,
+} from "@/lib/formula-picker";
+import {
+  dietaryTagsQuery,
+  formulasQuery,
+  formulaVersionDietaryTagLinksQuery,
+  techniqueCategoriesQuery,
+} from "@/lib/queries";
 import { inputClass, selectClass } from "./ui";
 
 interface FormulaPickerProps {
@@ -23,6 +32,9 @@ export function FormulaPicker({
 }: FormulaPickerProps) {
   const formulas = useQuery(formulasQuery());
   const techniques = useQuery(techniqueCategoriesQuery());
+  const tags = useQuery(dietaryTagsQuery());
+  const [tagId, setTagId] = useState("");
+  const links = useQuery({ ...formulaVersionDietaryTagLinksQuery(), enabled: Boolean(tagId) });
   const [search, setSearch] = useState("");
   const [scope, setScope] = useState<"compatible" | "unclassified" | "all">("compatible");
   const categories = techniques.data ?? [];
@@ -34,6 +46,13 @@ export function FormulaPicker({
     search,
     scope,
   );
+  const taggedOptions = tagId
+    ? options.filter(
+        (formula) =>
+          formula.id === value ||
+          hasLatestVersionDietaryTag(formula.formula_versions, links.data ?? [], tagId),
+      )
+    : options;
   const selected = formulas.data?.find((formula) => formula.id === value);
   const classification = selected && classifyFormulaForSlot(selected, categories, slot);
   const loading = formulas.isPending || techniques.isPending;
@@ -62,7 +81,27 @@ export function FormulaPicker({
           <option value="unclassified">Unclassified</option>
           <option value="all">Show all</option>
         </select>
+        {Boolean(tags.data?.length) && (
+          <select
+            aria-label={`${slot} declared dietary tag on latest version`}
+            className={`${selectClass} !w-auto`}
+            value={tagId}
+            onChange={(event) => setTagId(event.target.value)}
+          >
+            <option value="">Any dietary declaration</option>
+            {tags.data?.map((tag) => (
+              <option value={tag.id} key={tag.id}>
+                {tag.name}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
+      {tagId && links.isError && (
+        <p role="status" className="text-xs text-destructive">
+          Dietary declarations could not load.
+        </p>
+      )}
       <select
         aria-label={`${slot} recipe`}
         className={selectClass}
@@ -76,7 +115,7 @@ export function FormulaPicker({
         {value && !selected && (
           <option value={value}>{fallbackLabel ?? `Linked recipe (${value})`}</option>
         )}
-        {options.map((formula) => (
+        {taggedOptions.map((formula) => (
           <option key={formula.id} value={formula.id}>
             {formula.name}
             {formula.components?.name && formula.components.name !== formula.name
