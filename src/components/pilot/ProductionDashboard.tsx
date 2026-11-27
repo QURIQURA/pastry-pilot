@@ -62,6 +62,7 @@ import {
   syncWorkSessionToPlanner,
 } from "@/lib/work-session";
 import { mouldAbbr } from "@/lib/component-size";
+import { readTimers } from "@/lib/task-timers";
 import { completeComponentBlocks, isBlockPast } from "@/lib/complete-blocks";
 import { cn } from "@/lib/utils";
 import { buttonClass, inputClass } from "./ui";
@@ -559,6 +560,18 @@ export function ProductionDashboard() {
     return toMin(formatTime(instant)) + instant.getSeconds() / 60;
   };
   const completeRecords = productionRecords.filter((record) => record.done);
+  // 2026-11-27: 생산 기록에서 타이머(BAKE 등)가 시작됐거나 끝난 작업은 계량이 끝난 것으로 보고
+  // WORK VIEW 계량 표에서 흐리게, 맨 뒤로 보낸다. 타이머는 생산 기록에서 그대로 돈다.
+  const weighedRowIds = new Set(
+    productionRecords.flatMap((record) => {
+      const task = record.block.work_session_task_id
+        ? tasksById.get(record.block.work_session_task_id)
+        : undefined;
+      const pastWeighing =
+        record.done || (task ? readTimers(task).some((timer) => timer.started_at) : false);
+      return pastWeighing ? record.rows : [];
+    }),
+  );
   // The right-hand production record list is a day-wide timeline, not a view of
   // the currently selected 1차/2차 work tab. Tabs only scope the editing workspace.
   const allDayItems = tabItems.flat();
@@ -1373,6 +1386,7 @@ export function ProductionDashboard() {
               {activeItems.length ? (
                 <DayWorkView
                   part="WORK_VIEW"
+                  weighedIds={weighedRowIds}
                   key={`${date}-${activeTab}`}
                   items={activeItems}
                   batchBySelection={batchBySelection}
