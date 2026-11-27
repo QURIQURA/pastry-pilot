@@ -1077,16 +1077,16 @@ function WeighingView({
   onEditPlan,
   getBatchAction,
   weighedIds,
-  stage2WeighedIds,
+  weighedPartByRow,
 }: {
   sessionId: string;
   groups: ReturnType<typeof buildWeighingGroups>;
   columns: WeighingColumn[];
   /** 계량이 끝나 다음 단계(오븐 타이머 등)로 넘어간 선택(행) id — 해당 열은 흐리게, 맨 뒤로 */
   weighedIds?: ReadonlySet<string> | undefined;
-  /** 2차 블록(타임라인 2차 이후) 타이머가 시작됐거나 끝난 선택(행) id — 2차 재료가 있는 열은
-   * 이것으로만 타이머 기준 계량 완료를 판단한다(#92). */
-  stage2WeighedIds?: ReadonlySet<string> | undefined;
+  /** 선택(행) id → 생산 기록 타이머가 시작됐거나 끝난 가장 뒤 블록 번호(1차=1, 2차=2…). 여러 단계
+   * 포뮬라는 마지막 단계 블록까지 와야 타이머 기준 계량 완료로 본다(#92, #94). */
+  weighedPartByRow?: ReadonlyMap<string, number> | undefined;
   onProgressChanged: () => void;
   onEditColumn?: (column: WeighingColumn) => void;
   onSelectColumn?: ((id: string) => void) | undefined;
@@ -1131,9 +1131,10 @@ function WeighingView({
   // 2026-11-27: 계량이 끝난 열(모든 재료 체크, 또는 생산 기록 타이머가 시작됨)은 흐리게 표시하고
   // 맨 뒤로 보낸다. 저장된 열 순서는 그대로 두고 표시만 바꾸므로, 다시 미완료가 되면 원래 자리로
   // 돌아온다. 블렌드 하위 열(groupKey)은 묶음 단위로 함께 판단하고 함께 움직인다.
-  // 2026-11-27 (#92) 두 단계 포뮬라: 2차 재료가 있는 열은 1차만 끝나면 "1차 계량 완료 · 2차 대기"로
-  // 제자리에 두고, 2차까지 체크하거나 2차 블록 타이머가 시작돼야 계량 완료로 본다.
-  const { weighedColumnIds, stageWaitingColumnIds } = useMemo(() => {
+  // 2026-11-27 (#92, #94) 여러 단계 포뮬라: 나중 단계(2차, 3차…) 재료가 있는 열은 앞 단계만 끝나면
+  // "N차 계량 완료 · N+1차 대기"로 제자리에 두고, 마지막 단계까지 체크하거나 마지막 단계 블록의
+  // 타이머가 시작돼야 계량 완료로 본다.
+  const { weighedColumnIds, stageWaitingColumns } = useMemo(() => {
     const unitOf = (c: WeighingColumn) => c.groupKey ?? c.selectionId;
     const unitColumns = new Map<string, WeighingColumn[]>();
     for (const c of columns) unitColumns.set(unitOf(c), [...(unitColumns.get(unitOf(c)) ?? []), c]);
@@ -1149,31 +1150,40 @@ function WeighingView({
         ]);
     const isChecked = (st: WorkSessionProgressStatus) => st === "DONE" || st === "SKIPPED";
     const done = new Set<string>();
-    const waiting = new Set<string>();
+    /** 선택 id → 끝난 단계(N) — "N차 계량 완료 · N+1차 대기" */
+    const waiting = new Map<string, number>();
     for (const [unit, members] of unitColumns) {
       const rowIds = [
         unit,
         ...members.flatMap((c) => [c.selectionId, ...(c.members ?? []).map((m) => m.selectionId)]),
       ];
       const cells = members.flatMap((c) => cellsBySelection.get(c.selectionId) ?? []);
-      const allChecked = cells.length > 0 && cells.every((cell) => isChecked(cell.status));
-      const twoStage = cells.some((cell) => cell.stage >= 2);
-      const timerDone = rowIds.some((id) =>
-        twoStage ? stage2WeighedIds?.has(id) : weighedIds?.has(id),
+      const lastStage = cells.reduce((max, cell) => Math.max(max, cell.stage), 1);
+      const timerPart = rowIds.reduce(
+        (max, id) => Math.max(max, weighedPartByRow?.get(id) ?? 0),
+        0,
       );
+      const allChecked = cells.length > 0 && cells.every((cell) => isChecked(cell.status));
+      const timerDone =
+        lastStage <= 1 ? rowIds.some((id) => weighedIds?.has(id)) : timerPart >= lastStage;
       if (allChecked || timerDone) {
         for (const c of members) done.add(c.selectionId);
         continue;
       }
-      if (!twoStage) continue;
-      const stage1Cells = cells.filter((cell) => cell.stage < 2);
-      const stage1Done =
-        (stage1Cells.length > 0 && stage1Cells.every((cell) => isChecked(cell.status))) ||
-        rowIds.some((id) => weighedIds?.has(id));
-      if (stage1Done) for (const c of members) waiting.add(c.selectionId);
+      if (lastStage <= 1) continue;
+      // 체크로 끝난 단계: 1차부터 이어서 모든 재료가 체크된 단계까지. 타이머 기준과 큰 쪽을 쓴다.
+      const stages = [...new Set(cells.map((cell) => cell.stage))].sort((a, b) => a - b);
+      let checkedThrough = 0;
+      for (const stage of stages) {
+        if (!cells.filter((cell) => cell.stage === stage).every((cell) => isChecked(cell.status)))
+          break;
+        checkedThrough = stage;
+      }
+      const finished = Math.min(Math.max(checkedThrough, timerPart), lastStage - 1);
+      if (finished >= 1) for (const c of members) waiting.set(c.selectionId, finished);
     }
-    return { weighedColumnIds: done, stageWaitingColumnIds: waiting };
-  }, [columns, groups, weighedIds, stage2WeighedIds]);
+    return { weighedColumnIds: done, stageWaitingColumns: waiting };
+  }, [columns, groups, weighedIds, weighedPartByRow]);
 
   const displayColumns = useMemo(() => {
     const byId = new Map(columns.map((c) => [c.selectionId, c]));
@@ -1354,7 +1364,7 @@ function WeighingView({
                     key={col.selectionId}
                     id={col.selectionId}
                     weighed={weighedColumnIds.has(col.selectionId)}
-                    stageWaiting={stageWaitingColumnIds.has(col.selectionId)}
+                    stageWaiting={stageWaitingColumns.get(col.selectionId)}
                     formulaName={col.formulaName}
                     formulaId={col.formulaId}
                     versionId={col.formulaVersionId}
@@ -1486,6 +1496,31 @@ function WeighingView({
               ))}
               <td className="border-t border-l border-border bg-secondary" />
             </tr>
+            {/* 2026-11-27 (#94) 재료마다 ○를 누르기 번거로워서 — 포뮬라(열)마다 단계별로 한 번에 체크.
+                이미 그 단계가 다 체크돼 있으면 한 번 더 눌러 전체 해제. */}
+            <tr>
+              <th className="label-caps sticky left-0 z-10 border-t border-r border-border bg-secondary px-3 py-1.5 text-right text-xs text-muted-foreground">
+                전체 체크
+              </th>
+              {displayColumns.map((col) => (
+                <td
+                  key={col.selectionId}
+                  className={cn(
+                    "border-t border-l border-border bg-secondary px-2 py-1.5 text-left",
+                    weighedColumnIds.has(col.selectionId) && "opacity-40",
+                  )}
+                >
+                  <StageCheckAllButtons
+                    sessionId={col.sessionId ?? sessionId}
+                    cells={groups.flatMap((group) =>
+                      group.cells.filter((cell) => cell.selectionId === col.selectionId),
+                    )}
+                    onChanged={onProgressChanged}
+                  />
+                </td>
+              ))}
+              <td className="border-t border-l border-border bg-secondary" />
+            </tr>
           </thead>
         </DndContext>
         <DndContext
@@ -1569,13 +1604,13 @@ function MatrixColumnHeader({
   sourceLabel,
   mergeAction,
   weighed = false,
-  stageWaiting = false,
+  stageWaiting,
 }: {
   id: string;
   /** 계량 완료 — 헤더 내용을 흐리게(배경은 sticky 가림막이라 그대로 둔다) */
   weighed?: boolean;
-  /** 두 단계 포뮬라에서 1차 계량만 끝나고 2차 재료를 기다리는 중(#92) */
-  stageWaiting?: boolean;
+  /** 여러 단계 포뮬라에서 N차까지 계량이 끝나고 다음 단계 재료를 기다리는 중 — 끝난 단계 N(#92, #94) */
+  stageWaiting?: number | undefined;
   /** 블렌드(합성) 포뮬라의 원본 열이면 묶음 제목 — 첫 열에만 글자를 그리고 모든 원본 열 위에 같은 색 띠를 둔다 */
   groupLabel?: string | undefined;
   groupFirst?: boolean;
@@ -1672,12 +1707,12 @@ function MatrixColumnHeader({
           </p>
         )}
         {weighed && <p className="label-caps mt-1 text-[10px]">계량 완료</p>}
-        {!weighed && stageWaiting && (
+        {!weighed && stageWaiting != null && (
           <p
             className="label-caps mt-1 text-[10px]"
-            title="나중에 넣는 2차 재료가 남아 있어요 — 2차까지 체크하거나 2차 블록 타이머를 시작하면 계량 완료"
+            title="나중 단계 재료가 남아 있어요 — 마지막 단계까지 체크하거나 그 단계 블록 타이머를 시작하면 계량 완료"
           >
-            1차 계량 완료 · 2차 대기
+            {stageWaiting}차 계량 완료 · {stageWaiting + 1}차 대기
           </p>
         )}
       </div>
@@ -1797,6 +1832,87 @@ function MatrixBodyRow({
   );
 }
 
+/** 한 포뮬라(열)의 재료를 단계(1차, 2차…)별로 한 번에 체크/해제하는 버튼 — 단계가 하나면 "전체" 하나. */
+function StageCheckAllButtons({
+  sessionId,
+  cells,
+  onChanged,
+}: {
+  sessionId: string;
+  cells: ReturnType<typeof buildWeighingGroups>[number]["cells"];
+  onChanged: () => void;
+}) {
+  const stages = [...new Set(cells.map((cell) => cell.stage))].sort((a, b) => a - b);
+  const isChecked = (status: WorkSessionProgressStatus) =>
+    status === "DONE" || status === "SKIPPED";
+  const setStage = useMutation({
+    mutationFn: async ({ stage, status }: { stage: number; status: WorkSessionProgressStatus }) => {
+      const user_id = await currentUserId();
+      const rows = cells
+        .filter((cell) => cell.stage === stage)
+        .flatMap((cell) =>
+          (
+            cell.members ?? [
+              {
+                selectionId: cell.selectionId,
+                sessionId,
+                status: cell.progressStatus,
+                note: cell.note,
+              },
+            ]
+          ).map((member) => ({
+            user_id,
+            work_session_id: member.sessionId,
+            work_session_formula_version_id: member.selectionId,
+            formula_version_ingredient_id: cell.ingredientLineId,
+            status,
+            note: member.note,
+          })),
+        );
+      if (rows.length === 0) return;
+      const { error } = await supabase.from("work_session_progress").upsert(rows, {
+        onConflict: "work_session_formula_version_id,formula_version_ingredient_id",
+      });
+      if (error) throw error;
+    },
+    onSuccess: onChanged,
+  });
+  if (cells.length === 0) return <span className="text-muted-foreground">—</span>;
+  return (
+    <div className="flex flex-wrap gap-1">
+      {stages.map((stage) => {
+        const stageCells = cells.filter((cell) => cell.stage === stage);
+        const allDone = stageCells.every((cell) => isChecked(cell.progressStatus));
+        const label = stages.length > 1 ? `${stage}차` : "전체";
+        return (
+          <button
+            key={stage}
+            type="button"
+            className={cn(
+              "label-caps border px-1.5 py-0.5 text-[10px] disabled:opacity-40",
+              allDone
+                ? "border-foreground bg-foreground text-background"
+                : "border-border bg-background hover:border-foreground",
+            )}
+            disabled={setStage.isPending}
+            aria-pressed={allDone}
+            title={
+              setStage.isError
+                ? `저장 실패: ${(setStage.error as Error).message}`
+                : allDone
+                  ? `${label} 체크 모두 해제`
+                  : `${label} 재료 ${stageCells.length}개 모두 체크`
+            }
+            onClick={() => setStage.mutate({ stage, status: allDone ? "NOT_STARTED" : "DONE" })}
+          >
+            {allDone ? "✓" : "○"} {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /** WEIGHING MATRIX 재료 셀은 체크/언체크 2단계만 지원한다(2026-09-24, 4단계 순환이 너무 복잡하다는 피드백).
  * SHORTAGE/SKIPPED는 과거 데이터에 남아있을 수 있어 표시는 그대로 하되, 이 버튼으로는 만들지 않는다. */
 function toggleProgressStatus(current: WorkSessionProgressStatus): WorkSessionProgressStatus {
@@ -1899,9 +2015,9 @@ function WeighingMatrixCell({
       {cell.stage >= 2 && (
         <span
           className="label-caps shrink-0 border border-foreground px-1 text-[10px] leading-4"
-          title="나중 단계(2차)에 넣는 재료"
+          title={`나중 단계(${cell.stage}차)에 넣는 재료`}
         >
-          2차
+          {cell.stage}차
         </span>
       )}
       {cell.lineNote?.trim() && (
@@ -1994,9 +2110,9 @@ function FormulaView({
                     {(line.stage ?? 1) >= 2 && (
                       <span
                         className="label-caps ml-2 border border-foreground px-1 text-[10px]"
-                        title="나중 단계(2차)에 넣는 재료"
+                        title={`나중 단계(${line.stage}차)에 넣는 재료`}
                       >
-                        2차
+                        {line.stage}차
                       </span>
                     )}
                     {line.note?.trim() && (
@@ -2044,7 +2160,7 @@ type EditDraftRow = {
   /** 저장된 값 — 개수 표기만 바뀌어도 저장 대상이 되게 비교용 */
   originalSecondaryAmount?: number | null;
   originalSecondaryUnit?: string | null;
-  /** 2차(나중에 넣는) 재료 표시 — 새 버전으로 저장할 때 그대로 옮긴다 */
+  /** 나중 단계(N차) 재료 표시 — 새 버전으로 저장할 때 그대로 옮긴다 */
   stage?: number;
   removed: boolean;
 };
@@ -3756,12 +3872,12 @@ export function DayWorkView({
   focusKey,
   part = "ALL",
   weighedIds,
-  stage2WeighedIds,
+  weighedPartByRow,
 }: {
   /** 계량이 끝나 다음 단계로 넘어간 선택(행) id — WEIGHING MATRIX에서 흐리게, 맨 뒤로 */
   weighedIds?: ReadonlySet<string>;
-  /** 2차 블록 타이머가 시작됐거나 끝난 선택(행) id — 두 단계 포뮬라의 계량 완료 판단용(#92) */
-  stage2WeighedIds?: ReadonlySet<string>;
+  /** 선택(행) id → 타이머가 시작됐거나 끝난 가장 뒤 블록 번호 — 여러 단계 포뮬라의 계량 완료 판단용 */
+  weighedPartByRow?: ReadonlyMap<string, number>;
   /** COMPONENTS: 컴포넌트 생산 리스트만 / WORK_VIEW: 계량 표(WORK VIEW)만 / ALL: 둘 다 */
   part?: "ALL" | "COMPONENTS" | "WORK_VIEW";
   renderRecords?: (selectionIds: string[]) => React.ReactNode;
@@ -4118,7 +4234,7 @@ export function DayWorkView({
               onColumnOrder={onColumnOrder}
               getBatchAction={getBatchAction}
               weighedIds={weighedIds}
-              stage2WeighedIds={stage2WeighedIds}
+              weighedPartByRow={weighedPartByRow}
               onEditPlan={
                 onSelectColumn
                   ? (id) => setPlanId((previous) => (previous === id ? null : id))

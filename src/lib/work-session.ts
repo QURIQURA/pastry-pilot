@@ -82,7 +82,7 @@ export interface WeighingCell {
   secondaryUnit: string | null;
   /** 포뮬라 재료 줄에 적어둔 코멘트(예: 유청 분리한 것) — 계량 진행 메모(note)와는 별개 */
   lineNote: string | null;
-  /** 1 = 처음부터, 2 = 나중에 넣는 재료(2차). 두 단계 포뮬라의 계량 완료 판단에 쓴다. */
+  /** 1 = 처음부터, 2·3·4… = 나중 단계(N차)에 넣는 재료. 여러 단계 포뮬라의 계량 완료 판단에 쓴다. */
   stage: number;
 }
 
@@ -160,7 +160,7 @@ export function buildWeighingGroups(params: {
         secondaryAmount: line.secondary_amount != null ? Number(line.secondary_amount) : null,
         secondaryUnit: line.secondary_unit ?? null,
         lineNote: line.note?.trim() || null,
-        stage: Number(line.stage ?? 1) >= 2 ? 2 : 1,
+        stage: Math.max(1, Math.round(Number(line.stage ?? 1)) || 1),
       });
     });
     return {
@@ -173,8 +173,8 @@ export function buildWeighingGroups(params: {
       minCol,
       maxCol,
       firstSortOrder: occurrence.sortOrder,
-      // 2차(나중에 넣는) 재료 줄은 같은 열 묶음 안에서 1차 재료 뒤로 — 계량 순서대로 보이게.
-      lateStage: cells.length > 0 && cells.every((cell) => cell.stage >= 2) ? 1 : 0,
+      // 나중 단계(2차, 3차…) 재료 줄은 같은 열 묶음 안에서 단계 순서대로 — 계량 순서대로 보이게.
+      lateStage: cells.length > 0 ? Math.min(...cells.map((cell) => cell.stage)) : 1,
     };
   });
   return rows

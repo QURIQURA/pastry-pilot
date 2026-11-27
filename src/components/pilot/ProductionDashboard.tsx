@@ -603,18 +603,21 @@ export function ProductionDashboard() {
       return pastWeighing ? record.rows : [];
     }),
   );
-  // 2026-11-27 (#92) 두 단계 포뮬라: 2차 재료가 있는 열은 2차 블록(2차 이후)의 타이머로만 계량 완료.
+  // 2026-11-27 (#92, #94) 여러 단계 포뮬라: 행마다 타이머가 시작됐거나 끝난 가장 뒤 블록 번호.
+  // 계량 표는 마지막 단계 블록까지 왔을 때만 타이머 기준 계량 완료로 본다.
   const recordPastWeighing = (record: (typeof productionRecords)[number]) => {
     const task = record.block.work_session_task_id
       ? tasksById.get(record.block.work_session_task_id)
       : undefined;
     return record.done || (task ? readTimers(task).some((timer) => timer.started_at) : false);
   };
-  const stage2WeighedRowIds = new Set(
-    productionRecords.flatMap((record) =>
-      (record.block.part_no ?? 1) >= 2 && recordPastWeighing(record) ? record.rows : [],
-    ),
-  );
+  const weighedPartByRow = new Map<string, number>();
+  for (const record of productionRecords) {
+    if (!recordPastWeighing(record)) continue;
+    const part = record.block.part_no ?? 1;
+    for (const id of record.rows)
+      weighedPartByRow.set(id, Math.max(weighedPartByRow.get(id) ?? 0, part));
+  }
   // The right-hand production record list is a day-wide timeline, not a view of
   // the currently selected 1차/2차 work tab. Tabs only scope the editing workspace.
   const allDayItems = tabItems.flat();
@@ -1430,7 +1433,7 @@ export function ProductionDashboard() {
                 <DayWorkView
                   part="WORK_VIEW"
                   weighedIds={weighedRowIds}
-                  stage2WeighedIds={stage2WeighedRowIds}
+                  weighedPartByRow={weighedPartByRow}
                   key={`${date}-${activeTab}`}
                   items={activeItems}
                   batchBySelection={batchBySelection}
