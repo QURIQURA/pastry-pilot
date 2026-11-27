@@ -12,6 +12,7 @@ import { toGrams } from "@/lib/formula";
 import { generateTitle } from "@/lib/datetime";
 import { ingredientDisplayName } from "@/lib/pilot";
 import type { VersionIngredientRow } from "@/lib/queries";
+import { alignIngredientOccurrences } from "@/lib/version-comparison-occurrences";
 
 export type WorkSession = Tables<"work_sessions">;
 export type WorkSessionFormulaVersion = Tables<"work_session_formula_versions">;
@@ -84,6 +85,9 @@ export interface WeighingCell {
 }
 
 export interface WeighingGroup {
+  /** Unique visual row identity; one row per ingredient occurrence/process step. */
+  rowKey: string;
+  /** The actual Ingredient Master ID, never replaced by the visual key. */
   ingredientId: string;
   ingredientName: string;
   cells: WeighingCell[];
@@ -99,7 +103,8 @@ export interface WeighingSelection {
 }
 
 /**
- * Ingredient Master ID(ingredient_id) 기준으로 그룹화한다 — 이름 문자열 비교는 절대 하지 않는다.
+ * Ingredient Master ID + occurrence (process note/ordinal) 기준으로 그룹화한다.
+ * 같은 재료를 두 번 쓰는 작업은 별도 행으로 표시하고 이름 문자열로 병합하지 않는다.
  * quantity는 절대 합산하지 않고, Formula×Ingredient 라인 하나하나가 독립된 cell로 남는다.
  *
  * 정렬 기준: 재료 이름순이 아니라 "어느 Formula 열(컬럼)에 걸쳐 있는지"로 정렬한다.
@@ -119,38 +124,27 @@ export function buildWeighingGroups(params: {
   /** key: `${selectionId}:${formula_version_ingredient_id}` */
   progressBySelectionAndLine: Record<string, { status: string; note: string | null }>;
 }): WeighingGroup[] {
-  const groups = new Map<
-    string,
-    WeighingGroup & { minCol: number; maxCol: number; firstSortOrder: number }
-  >();
-  const orderedSelections = [...params.selections].sort((a, b) => a.sortOrder - b.sortOrder);
-  const columnIndex = new Map<string, number>();
-  orderedSelections.forEach((sel, idx) => columnIndex.set(sel.selectionId, idx));
-
-  for (const sel of orderedSelections) {
-    // Formula 페이지에서 정해둔 재료 배치 순서(sort_order)를 그대로 따른다 — 이미 정렬된 채로 넘어온다.
-    const lines = params.ingredientsByVersion[sel.formulaVersionId] ?? [];
-    const colIdx = columnIndex.get(sel.selectionId) ?? 0;
-    for (const line of lines) {
-      const ingredientId = line.ingredient_id;
-      let group = groups.get(ingredientId);
-      if (!group) {
-        group = {
-          ingredientId,
-          ingredientName: ingredientDisplayName(line.ingredients),
-          cells: [],
-          minCol: colIdx,
-          maxCol: colIdx,
-          firstSortOrder: line.sort_order,
-        };
-        groups.set(ingredientId, group);
-      } else {
-        group.minCol = Math.min(group.minCol, colIdx);
-        group.maxCol = Math.max(group.maxCol, colIdx);
-        group.firstSortOrder = Math.min(group.firstSortOrder, line.sort_order);
-      }
+  const ordered = [...params.selections].sort((a, b) => a.sortOrder - b.sortOrder);
+  // A repeated Ingredient Master ID is not one production step. Align
+  // individual occurrences across columns by process note, then ordinal,
+  // while keeping the real line UUID for progress and actual quantity.
+  const occurrences = alignIngredientOccurrences(
+    ordered.map((sel) => ({ id: sel.selectionId })),
+    ordered.map((sel) => params.ingredientsByVersion[sel.formulaVersionId] ?? []),
+  );
+  const rows = occurrences.map((occurrence) => {
+    let minCol = Infinity;
+    let maxCol = -1;
+    let ingredientName = "—";
+    const cells: WeighingCell[] = [];
+    ordered.forEach((sel, colIdx) => {
+      const line = occurrence.byVersion.get(sel.selectionId);
+      if (!line) return;
+      minCol = Math.min(minCol, colIdx);
+      maxCol = Math.max(maxCol, colIdx);
+      ingredientName = ingredientDisplayName(line.ingredients);
       const progress = params.progressBySelectionAndLine[`${sel.selectionId}:${line.id}`];
-      group.cells.push({
+      cells.push({
         selectionId: sel.selectionId,
         formulaVersionId: sel.formulaVersionId,
         formulaName: sel.formulaName,
@@ -165,15 +159,26 @@ export function buildWeighingGroups(params: {
         secondaryUnit: line.secondary_unit ?? null,
         lineNote: line.note?.trim() || null,
       });
-    }
-  }
-
-  return [...groups.values()].sort((a, b) => {
-    if (a.minCol !== b.minCol) return a.minCol - b.minCol;
-    if (a.maxCol !== b.maxCol) return a.maxCol - b.maxCol;
-    // 같은 Formula 열에 속하면 그 Formula에서 정해둔 재료 배치 순서(sort_order)를 따른다 — 이름순 아님
-    return a.firstSortOrder - b.firstSortOrder;
+    });
+    return {
+      rowKey: occurrence.id,
+      ingredientId: occurrence.ingredientId,
+      ingredientName,
+      cells,
+      minCol,
+      maxCol,
+      firstSortOrder: occurrence.sortOrder,
+    };
   });
+  return rows
+    .sort(
+      (a, b) =>
+        a.minCol - b.minCol ||
+        a.maxCol - b.maxCol ||
+        a.firstSortOrder - b.firstSortOrder ||
+        a.rowKey.localeCompare(b.rowKey),
+    )
+    .map(({ minCol: _min, maxCol: _max, firstSortOrder: _sort, ...group }) => group);
 }
 
 /** Multiplier History에 남길 스냅샷 — 적용 당시 계산된 working quantity를 그대로 기록한다 */
