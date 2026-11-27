@@ -21,6 +21,24 @@ create policy "own production_merge_members" on public.production_merge_members
 grant select, insert, update, delete on public.production_merge_members to authenticated;
 grant all on public.production_merge_members to service_role;
 
+-- A removed batch must not be resurrected by stale localStorage on another device.
+-- Keep lightweight membership tombstones; no recipe or production record is modified.
+create table if not exists public.production_merge_removed_members (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  work_date date not null,
+  selection_id uuid not null references public.work_session_formula_versions(id) on delete cascade,
+  removed_at timestamptz not null default now(),
+  primary key (user_id, work_date, selection_id)
+);
+alter table public.production_merge_removed_members enable row level security;
+drop policy if exists "own production_merge_removed_members" on public.production_merge_removed_members;
+create policy "own production_merge_removed_members" on public.production_merge_removed_members
+  for all to authenticated
+  using ((select auth.uid()) = user_id)
+  with check ((select auth.uid()) = user_id);
+grant select, insert, update, delete on public.production_merge_removed_members to authenticated;
+grant all on public.production_merge_removed_members to service_role;
+
 -- Atomic join/unmerge. Guard the caller, version and all existing group members.
 -- No stored quantity: the original selection multipliers and formula lines remain authoritative.
 create or replace function public.production_merge_change(
@@ -56,6 +74,11 @@ begin
     where user_id = v_user and work_date = p_work_date
       and selection_id = p_selection_ids[1];
     if v_batch is not null then
+      insert into public.production_merge_removed_members (user_id, work_date, selection_id)
+        select user_id, work_date, selection_id
+        from public.production_merge_members
+        where user_id = v_user and work_date = p_work_date and batch_id = v_batch
+        on conflict (user_id, work_date, selection_id) do nothing;
       delete from public.production_merge_members
       where user_id = v_user and work_date = p_work_date and batch_id = v_batch;
     end if;
@@ -156,6 +179,12 @@ begin
       select 1 from proposed p
       join public.production_merge_members m
         on m.user_id = v_user and m.work_date = p_work_date and m.selection_id = p.selection_id
+      where p.batch_id = e.batch_id
+    )
+    and not exists (
+      select 1 from proposed p
+      join public.production_merge_removed_members r
+        on r.user_id = v_user and r.work_date = p_work_date and r.selection_id = p.selection_id
       where p.batch_id = e.batch_id
     )
   )
