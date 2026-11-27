@@ -369,6 +369,7 @@ export function ProductionDashboard() {
   const selectedRow = selected ? rowById.get(selected.work_session_formula_version_id) : undefined;
   // 타임라인 아래 WORK VIEW 등은 "그날 블록이 속한 세션들"을 기본으로 보여준다(날짜 기준 작업공간).
   // 대기공간 카드를 눌러 고른 세션은, 그날 블록이 없어도 추가로 보여준다.
+  const { batchBySelection, setBatch } = useProductionMerge(date);
   const workspaceSessions = useMemo(() => {
     // WORK VIEW / ADJUST QUANTITY는 선택한 날짜에 블록이 있는 컴포넌트만(세션별로 묶어서) 보여준다.
     // 대기공간 카드를 눌러 고른 컴포넌트(아직 배정 전)는 그 카드만 추가로 보여준다.
@@ -384,8 +385,18 @@ export function ProductionDashboard() {
     for (const b of sorted) add(b.work_session_formula_version_id);
     for (const row of dateOnlyRows) add(row.id);
     if (focusRowId && (blocksByRow.get(focusRowId) ?? []).length === 0) add(focusRowId);
+    // A shared weighing batch may include an order whose historical work block
+    // was planned on another date. Show that source in this day's weighing sheet
+    // without moving or changing any original timed production record.
+    const activeIds = new Set([...bySession.values()].flat());
+    const activeBatches = new Set(
+      [...activeIds].map((id) => batchBySelection.get(id)).filter(Boolean),
+    );
+    for (const [selectionId, batchId] of batchBySelection) {
+      if (activeBatches.has(batchId)) add(selectionId);
+    }
     return [...bySession.entries()].map(([sid, rowIds]) => ({ sid, rowIds }));
-  }, [dayBlocks, dateOnlyRows, rowById, blocksByRow, focusRowId]);
+  }, [dayBlocks, dateOnlyRows, rowById, blocksByRow, focusRowId, batchBySelection]);
   // 합쳐진 WORK VIEW용: 타임라인 시간순으로 (세션 상관없이) 컴포넌트 열을 나열
   const dayWorkItems = useMemo(
     () =>
@@ -417,7 +428,6 @@ export function ProductionDashboard() {
   const tasksById = new Map(
     taskQueries.flatMap((query) => (query.data ?? []).map((task) => [task.id, task] as const)),
   );
-  const { batchBySelection, setBatch } = useProductionMerge(date);
   const tabByRow = new Map(
     tabItems.flatMap((items, index) => items.map((item) => [item.rowId, index] as const)),
   );

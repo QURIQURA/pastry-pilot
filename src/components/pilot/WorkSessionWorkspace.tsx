@@ -3685,74 +3685,7 @@ function StockReflectSection({
  * 대시보드용 합쳐진 WORK VIEW(2026-10-22) — 그날 타임라인에 배정된 컴포넌트를 오더(세션)와 상관없이
  * 한 계량표에 나란히 보여준다(예전 WORK SESSION 화면처럼). items는 타임라인 시간순.
  */
-const PRODUCTION_BATCH_EVENT = "pilot:production-batches";
-
-/** Batch selections are a local view preference scoped to the production date. */
-export function useProductionMerge(date: string) {
-  const key = `pilot:production-batches:${date}`;
-  const [state, setState] = useState<{ key: string; members: Map<string, string> }>();
-  const [revision, setRevision] = useState(0);
-  // Orders and the Dashboard edit the same batches; reload when another view saves.
-  useEffect(() => {
-    const reload = (event: Event) => {
-      const changed = event instanceof CustomEvent ? event.detail : (event as StorageEvent).key;
-      if (changed === key) setRevision((value) => value + 1);
-    };
-    window.addEventListener(PRODUCTION_BATCH_EVENT, reload);
-    window.addEventListener("storage", reload);
-    return () => {
-      window.removeEventListener(PRODUCTION_BATCH_EVENT, reload);
-      window.removeEventListener("storage", reload);
-    };
-  }, [key]);
-  useEffect(() => {
-    let entries: [string, string][] = [];
-    try {
-      const stored: unknown = JSON.parse(localStorage.getItem(key) ?? "[]");
-      if (Array.isArray(stored)) {
-        entries = stored.filter(
-          (entry): entry is [string, string] =>
-            Array.isArray(entry) &&
-            entry.length === 2 &&
-            entry.every((value) => typeof value === "string"),
-        );
-      }
-    } catch {
-      // Local view state is optional.
-    }
-    setState({ key, members: new Map(entries) });
-  }, [key, revision]);
-  const batchBySelection = useMemo(
-    () => (state?.key === key ? state.members : new Map<string, string>()),
-    [key, state],
-  );
-  const setBatch = (ids: string[]) => {
-    if (!ids.length) return;
-    const next = new Map(batchBySelection);
-    if (ids.length > 1) {
-      // Extend an existing batch rather than replacing its identity or losing members.
-      const batchId = ids.map((id) => next.get(id)).find(Boolean) ?? crypto.randomUUID();
-      const joinedBatches = new Set(ids.map((id) => next.get(id)).filter(Boolean));
-      for (const [id, existingBatch] of next) {
-        if (joinedBatches.has(existingBatch)) next.set(id, batchId);
-      }
-      ids.forEach((id) => next.set(id, batchId));
-    } else {
-      const batchId = next.get(ids[0]!);
-      for (const [id, batch] of next) {
-        if (batch === batchId) next.delete(id);
-      }
-    }
-    setState({ key, members: next });
-    try {
-      localStorage.setItem(key, JSON.stringify([...next]));
-    } catch {
-      // Local view state is optional.
-    }
-    window.dispatchEvent(new CustomEvent(PRODUCTION_BATCH_EVENT, { detail: key }));
-  };
-  return { batchBySelection, setBatch };
-}
+export { useProductionMerge } from "@/hooks/useProductionMerge";
 
 export function DayWorkView({
   items,
