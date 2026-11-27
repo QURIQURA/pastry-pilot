@@ -60,12 +60,22 @@ begin
  if exists (select 1 from public.production_merge_members where work_date='2026-11-27')
  then raise exception 'unmerge did not clear only the target group'; end if;
 end; $$;
--- Legacy groups can be imported without overwriting remote state.
+-- An old browser must not resurrect a group that was explicitly unmerged elsewhere.
 select public.production_merge_import_legacy('2026-11-27',
  '[["30000000-0000-0000-0000-000000000001","40000000-0000-0000-0000-000000000001"],["30000000-0000-0000-0000-000000000002","40000000-0000-0000-0000-000000000001"]]'::jsonb);
-do $$
+do $
 begin
- if (select count(*) from public.production_merge_members where work_date='2026-11-27') <> 2
- then raise exception 'legacy import lost members'; end if;
-end; $$;
+ if exists (select 1 from public.production_merge_members where work_date='2026-11-27')
+ then raise exception 'stale legacy state resurrected unmerged batch'; end if;
+ if (select count(*) from public.production_merge_removed_members where work_date='2026-11-27') <> 3
+ then raise exception 'unmerge tombstones missing'; end if;
+end; $;
+-- A different day with no prior changes can still import a valid legacy group.
+select public.production_merge_import_legacy('2026-11-28',
+ '[["30000000-0000-0000-0000-000000000001","40000000-0000-0000-0000-000000000001"],["30000000-0000-0000-0000-000000000002","40000000-0000-0000-0000-000000000001"]]'::jsonb);
+do $
+begin
+ if (select count(*) from public.production_merge_members where work_date='2026-11-28') <> 2
+ then raise exception 'valid legacy import lost members'; end if;
+end; $;
 rollback;
