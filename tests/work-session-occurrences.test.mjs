@@ -96,7 +96,13 @@ test("Two-stage formula: late-addition (2차) rows carry stage and sort after st
   ];
   const groups = buildWeighingGroups({
     selections: [
-      { selectionId: "s1", formulaVersionId: "ch", formulaName: "Chantilly", multiplier: 1, sortOrder: 1 },
+      {
+        selectionId: "s1",
+        formulaVersionId: "ch",
+        formulaName: "Chantilly",
+        multiplier: 1,
+        sortOrder: 1,
+      },
     ],
     ingredientsByVersion: { ch: chantilly },
     progressBySelectionAndLine: {},
@@ -108,5 +114,31 @@ test("Two-stage formula: late-addition (2차) rows carry stage and sort after st
   assert.deepEqual(
     groups.map((g) => g.cells[0].stage),
     [1, 1, 2],
+  );
+});
+
+test("Multi-stage formula: rows sort by stage (1차, 2차, 3차)", () => {
+  const groups = buildWeighingGroups({
+    selections: [
+      {
+        selectionId: "s1",
+        formulaVersionId: "m",
+        formulaName: "Multi",
+        multiplier: 1,
+        sortOrder: 1,
+      },
+    ],
+    ingredientsByVersion: {
+      m: [
+        { ...line("c", "gelatin", 5, 1, null), stage: 3 },
+        { ...line("b", "cream-cheese", 400, 2, null), stage: 2 },
+        line("a", "cream", 150, 3, null),
+      ],
+    },
+    progressBySelectionAndLine: {},
+  });
+  assert.deepEqual(
+    groups.map((g) => g.cells[0].stage),
+    [1, 2, 3],
   );
 });

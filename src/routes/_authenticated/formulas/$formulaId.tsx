@@ -480,7 +480,12 @@ function FormulaDetailPage() {
     onSuccess: invalidate,
   });
 
-  /** 2026-11-27 (#92) 재료를 2차(나중에 넣는 재료)로 표시/해제 — 바로 저장한다 */
+  /** 단계 선택지: 지금 쓰는 가장 뒤 단계 + 1(새 단계 추가용), 최대 9차 */
+  const stageOptions = Math.min(
+    9,
+    rows.reduce((max, row) => Math.max(max, row.stage ?? 1), 1) + 1,
+  );
+  /** 2026-11-27 (#92, #94) 재료를 넣는 단계(1차, 2차, 3차…) — 고르면 바로 저장한다 */
   const setRowStage = useMutation({
     mutationFn: async ({ id, stage }: { id: string; stage: number }) => {
       const { error } = await supabase
@@ -1345,9 +1350,8 @@ function FormulaDetailPage() {
                         draft={draft?.rows[row.id] ?? null}
                         onDraftChange={(patch) => patchRowDraft(row.id, patch)}
                         onRemove={() => removeRow.mutate(row.id)}
-                        onStageToggle={() =>
-                          setRowStage.mutate({ id: row.id, stage: row.stage === 2 ? 1 : 2 })
-                        }
+                        stageOptions={stageOptions}
+                        onStageChange={(stage) => setRowStage.mutate({ id: row.id, stage })}
                       />
                     ))}
                   </tbody>
@@ -1715,7 +1719,8 @@ function UnifiedIngredientRow({
   draft,
   onDraftChange,
   onRemove,
-  onStageToggle,
+  stageOptions = 2,
+  onStageChange,
 }: {
   row: VersionIngredientRow;
   locked: boolean;
@@ -1726,8 +1731,10 @@ function UnifiedIngredientRow({
   draft: RowDraft | null;
   onDraftChange: (patch: Partial<RowDraft>) => void;
   onRemove: () => void;
-  /** 2차(나중에 넣는 재료) 표시를 켜고 끈다 — 누르면 바로 저장된다 */
-  onStageToggle?: () => void;
+  /** 고를 수 있는 단계 수 — 지금 쓰는 가장 뒤 단계 + 1(최대 9). 새 단계는 여기서 골라서 만든다. */
+  stageOptions?: number;
+  /** 재료를 넣는 단계(1차, 2차, 3차…)를 바꾼다 — 고르면 바로 저장된다 */
+  onStageChange?: (stage: number) => void;
 }) {
   const [targetPctOpen, setTargetPctOpen] = useState(false);
   const [targetPct, setTargetPct] = useState("");
@@ -1816,31 +1823,33 @@ function UnifiedIngredientRow({
           (배합을 고치려는 클릭이 엉뚱하게 재료 상세 페이지로 튕겨나가던 문제 수정) */}
       <td className="break-words px-2 py-1 text-sm">
         <span>{ing ? ingredientDisplayName(ing) : "—"}</span>
-        {/* 2026-11-27 (#92) 두 단계 포뮬라 — 나중에 넣는 재료(예: 가나슈 숙성 후 크림치즈). 계량 표에서
-            2차 계량을 따로 확인한다. 편집 중에는 눌러서 켜고 끌 수 있다. */}
-        {editing && !locked && onStageToggle ? (
-          <button
-            type="button"
+        {/* 2026-11-27 (#92, #94) 여러 단계 포뮬라 — 나중에 넣는 재료(예: 가나슈 숙성 후 크림치즈)는 2차,
+            3차…로 표시한다. 목록 맨 끝 단계를 고르면 새 단계가 생긴다(최대 9차). 계량 표에서 단계별로 확인. */}
+        {editing && !locked && onStageChange ? (
+          <select
+            aria-label="재료를 넣는 단계"
+            title="이 재료를 넣는 단계 — 마지막 항목을 고르면 새 단계가 추가돼요"
             className={cn(
-              "label-caps ml-2 px-1.5 py-0.5 text-[10px]",
-              row.stage === 2
+              "label-caps ml-2 h-5 px-1 text-[10px] outline-none",
+              (row.stage ?? 1) >= 2
                 ? "border border-foreground bg-foreground text-background"
-                : "border border-dashed border-border text-muted-foreground hover:bg-secondary",
+                : "border border-dashed border-border bg-background text-muted-foreground",
             )}
-            title={
-              row.stage === 2
-                ? "2차 재료 — 눌러서 처음부터 넣는 재료로 되돌리기"
-                : "나중 단계(2차)에 넣는 재료로 표시"
-            }
-            aria-pressed={row.stage === 2}
-            onClick={onStageToggle}
+            value={row.stage ?? 1}
+            onChange={(e) => onStageChange(Number(e.target.value))}
           >
-            2차
-          </button>
+            {Array.from({ length: Math.max(stageOptions, row.stage ?? 1) }, (_, i) => i + 1).map(
+              (n) => (
+                <option key={n} value={n}>
+                  {n}차
+                </option>
+              ),
+            )}
+          </select>
         ) : (
-          row.stage === 2 && (
+          (row.stage ?? 1) >= 2 && (
             <span className="label-caps ml-2 border border-foreground px-1.5 py-0.5 text-[10px]">
-              2차
+              {row.stage}차
             </span>
           )
         )}
