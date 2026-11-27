@@ -79,8 +79,6 @@ export function alignIngredientOccurrences<T extends ComparisonIngredientRow>(
     .flat()
     .sort(
       (a, b) =>
-        a.firstSeenAt - b.firstSeenAt ||
-        a.sortOrder - b.sortOrder ||
-        a.id.localeCompare(b.id),
+        a.firstSeenAt - b.firstSeenAt || a.sortOrder - b.sortOrder || a.id.localeCompare(b.id),
     );
 }
