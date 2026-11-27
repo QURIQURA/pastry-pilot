@@ -42,10 +42,12 @@ begin
   perform pg_catalog.pg_advisory_xact_lock(
     pg_catalog.hashtextextended(v_user::text || ':' || p_work_date::text, 0)
   );
-  select count(*), count(distinct formula_version_id), min(formula_version_id)
-    into v_count, v_versions, v_version
+  select count(*), count(distinct formula_version_id)
+    into v_count, v_versions
   from public.work_session_formula_versions
   where id = any(p_selection_ids) and user_id = v_user;
+  select formula_version_id into v_version from public.work_session_formula_versions
+    where id = p_selection_ids[1] and user_id = v_user;
   if v_count <> cardinality(p_selection_ids) or v_versions <> 1 then
     raise exception 'All selections must belong to the caller and use one Formula Version';
   end if;
