@@ -1093,10 +1093,13 @@ function WeighingView({
   onColumnOrder,
   onEditPlan,
   getBatchAction,
+  weighedIds,
 }: {
   sessionId: string;
   groups: ReturnType<typeof buildWeighingGroups>;
   columns: WeighingColumn[];
+  /** 계량이 끝나 다음 단계(오븐 타이머 등)로 넘어간 선택(행) id — 해당 열은 흐리게, 맨 뒤로 */
+  weighedIds?: ReadonlySet<string> | undefined;
   onProgressChanged: () => void;
   onEditColumn?: (column: WeighingColumn) => void;
   onSelectColumn?: ((id: string) => void) | undefined;
@@ -1138,10 +1141,45 @@ function WeighingView({
     });
   }, [groups]);
 
+  // 2026-11-27: 계량이 끝난 열(모든 재료 체크, 또는 생산 기록 타이머가 시작됨)은 흐리게 표시하고
+  // 맨 뒤로 보낸다. 저장된 열 순서는 그대로 두고 표시만 바꾸므로, 다시 미완료가 되면 원래 자리로
+  // 돌아온다. 블렌드 하위 열(groupKey)은 묶음 단위로 함께 판단하고 함께 움직인다.
+  const weighedColumnIds = useMemo(() => {
+    const unitOf = (c: WeighingColumn) => c.groupKey ?? c.selectionId;
+    const unitColumns = new Map<string, WeighingColumn[]>();
+    for (const c of columns) unitColumns.set(unitOf(c), [...(unitColumns.get(unitOf(c)) ?? []), c]);
+    const statusesBySelection = new Map<string, WorkSessionProgressStatus[]>();
+    for (const group of groups)
+      for (const cell of group.cells)
+        statusesBySelection.set(cell.selectionId, [
+          ...(statusesBySelection.get(cell.selectionId) ?? []),
+          cell.progressStatus,
+        ]);
+    const done = new Set<string>();
+    for (const [unit, members] of unitColumns) {
+      const rowIds = [
+        unit,
+        ...members.flatMap((c) => [c.selectionId, ...(c.members ?? []).map((m) => m.selectionId)]),
+      ];
+      const statuses = members.flatMap((c) => statusesBySelection.get(c.selectionId) ?? []);
+      const allChecked =
+        statuses.length > 0 && statuses.every((st) => st === "DONE" || st === "SKIPPED");
+      if (allChecked || rowIds.some((id) => weighedIds?.has(id)))
+        for (const c of members) done.add(c.selectionId);
+    }
+    return done;
+  }, [columns, groups, weighedIds]);
+
   const displayColumns = useMemo(() => {
     const byId = new Map(columns.map((c) => [c.selectionId, c]));
-    return columnOrder.map((id) => byId.get(id)).filter((c): c is WeighingColumn => Boolean(c));
-  }, [columns, columnOrder]);
+    const ordered = columnOrder
+      .map((id) => byId.get(id))
+      .filter((c): c is WeighingColumn => Boolean(c));
+    return [
+      ...ordered.filter((c) => !weighedColumnIds.has(c.selectionId)),
+      ...ordered.filter((c) => weighedColumnIds.has(c.selectionId)),
+    ];
+  }, [columns, columnOrder, weighedColumnIds]);
 
   const displayGroups = useMemo(() => {
     const byId = new Map(groups.map((g) => [g.ingredientId, g]));
@@ -1302,11 +1340,15 @@ function WeighingView({
                   }}
                 />
               </th>
-              <SortableContext items={columnOrder} strategy={horizontalListSortingStrategy}>
+              <SortableContext
+                items={displayColumns.map((c) => c.selectionId)}
+                strategy={horizontalListSortingStrategy}
+              >
                 {displayColumns.map((col) => (
                   <MatrixColumnHeader
                     key={col.selectionId}
                     id={col.selectionId}
+                    weighed={weighedColumnIds.has(col.selectionId)}
                     formulaName={col.formulaName}
                     formulaId={col.formulaId}
                     versionId={col.formulaVersionId}
@@ -1362,7 +1404,10 @@ function WeighingView({
                   return (
                     <td
                       key={column.selectionId}
-                      className="border border-border bg-secondary px-2 py-1 text-xs"
+                      className={cn(
+                        "border border-border bg-secondary px-2 py-1 text-xs",
+                        weighedColumnIds.has(column.selectionId) && "opacity-40",
+                      )}
                     >
                       {onEditPlan && !column.groupKey ? (
                         <button
@@ -1404,7 +1449,10 @@ function WeighingView({
                   return (
                     <td
                       key={col.selectionId}
-                      className="border-t border-l border-border bg-secondary px-2 py-1 text-left font-mono text-[11px] tabular-nums text-muted-foreground"
+                      className={cn(
+                        "border-t border-l border-border bg-secondary px-2 py-1 text-left font-mono text-[11px] tabular-nums text-muted-foreground",
+                        weighedColumnIds.has(col.selectionId) && "opacity-40",
+                      )}
                     >
                       {col.allocations?.some((entry) => entry.split.length)
                         ? col.allocations.map((entry) => formatMouldSplit(entry.split)).join(" / ")
@@ -1422,7 +1470,10 @@ function WeighingView({
               {displayColumns.map((col) => (
                 <td
                   key={col.selectionId}
-                  className="border-t border-l border-border bg-secondary px-2 py-2 text-left text-sm font-semibold tabular-nums"
+                  className={cn(
+                    "border-t border-l border-border bg-secondary px-2 py-2 text-left text-sm font-semibold tabular-nums",
+                    weighedColumnIds.has(col.selectionId) && "opacity-40",
+                  )}
                 >
                   {fmtNumber(totalsByColumn[col.selectionId] ?? 0, 0)}g
                 </td>
@@ -1443,6 +1494,7 @@ function WeighingView({
                   key={group.ingredientId}
                   group={group}
                   columns={displayColumns}
+                  weighedColumnIds={weighedColumnIds}
                   gramsByColumn={gramsByColumn}
                   height={rowHeights[group.ingredientId] ?? DEFAULT_MATRIX_ROW_HEIGHT}
                   sessionId={sessionId}
@@ -1510,8 +1562,11 @@ function MatrixColumnHeader({
   onSelect,
   sourceLabel,
   mergeAction,
+  weighed = false,
 }: {
   id: string;
+  /** 계량 완료 — 헤더 내용을 흐리게(배경은 sticky 가림막이라 그대로 둔다) */
+  weighed?: boolean;
   /** 블렌드(합성) 포뮬라의 원본 열이면 묶음 제목 — 첫 열에만 글자를 그리고 모든 원본 열 위에 같은 색 띠를 둔다 */
   groupLabel?: string | undefined;
   groupFirst?: boolean;
@@ -1542,7 +1597,9 @@ function MatrixColumnHeader({
         groupFirst && "z-[25]",
         rnd && "!bg-[#DCF0C8]",
         isDragging && "z-40 bg-secondary",
+        weighed && "[&>*]:opacity-40",
       )}
+      title={weighed ? "계량 완료 — 타이머는 생산 기록에서 계속 진행" : undefined}
     >
       <div className="absolute inset-x-2 top-1.5 flex items-center justify-between gap-2">
         <button
@@ -1605,6 +1662,7 @@ function MatrixColumnHeader({
             {sourceLabel}
           </p>
         )}
+        {weighed && <p className="label-caps mt-1 text-[10px]">계량 완료</p>}
       </div>
       {mergeAction && (
         <button
@@ -1634,6 +1692,7 @@ function MatrixColumnHeader({
 function MatrixBodyRow({
   group,
   columns,
+  weighedColumnIds,
   gramsByColumn,
   height,
   sessionId,
@@ -1642,6 +1701,7 @@ function MatrixBodyRow({
 }: {
   group: ReturnType<typeof buildWeighingGroups>[number];
   columns: WeighingColumn[];
+  weighedColumnIds?: ReadonlySet<string>;
   gramsByColumn: ReadonlyMap<string, ReadonlyMap<string, number>>;
   height: number;
   sessionId: string;
@@ -1694,7 +1754,10 @@ function MatrixBodyRow({
         return (
           <td
             key={col.selectionId}
-            className="border-l border-border px-2 py-1 align-middle"
+            className={cn(
+              "border-l border-border px-2 py-1 align-middle",
+              weighedColumnIds?.has(col.selectionId) && "opacity-40",
+            )}
             style={{ height }}
           >
             {cell ? (
@@ -3711,7 +3774,10 @@ export function DayWorkView({
   focusedRowId,
   focusKey,
   part = "ALL",
+  weighedIds,
 }: {
+  /** 계량이 끝나 다음 단계로 넘어간 선택(행) id — WEIGHING MATRIX에서 흐리게, 맨 뒤로 */
+  weighedIds?: ReadonlySet<string>;
   /** COMPONENTS: 컴포넌트 생산 리스트만 / WORK_VIEW: 계량 표(WORK VIEW)만 / ALL: 둘 다 */
   part?: "ALL" | "COMPONENTS" | "WORK_VIEW";
   renderRecords?: (selectionIds: string[]) => React.ReactNode;
@@ -4067,6 +4133,7 @@ export function DayWorkView({
               onSelectColumn={onSelectColumn}
               onColumnOrder={onColumnOrder}
               getBatchAction={getBatchAction}
+              weighedIds={weighedIds}
               onEditPlan={
                 onSelectColumn
                   ? (id) => setPlanId((previous) => (previous === id ? null : id))
