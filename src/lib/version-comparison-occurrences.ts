@@ -25,8 +25,9 @@ export function alignIngredientOccurrences<T extends ComparisonIngredientRow>(
   const slots = new Map<string, ComparisonOccurrence<T>[]>();
   versions.forEach((version, versionIndex) => {
     const byIngredient = new Map<string, T[]>();
-    for (const row of [...(rowsByVersion[versionIndex] ?? [])]
-      .sort((a, b) => a.sort_order - b.sort_order || a.id.localeCompare(b.id))) {
+    for (const row of [...(rowsByVersion[versionIndex] ?? [])].sort(
+      (a, b) => a.sort_order - b.sort_order || a.id.localeCompare(b.id),
+    )) {
       const list = byIngredient.get(row.ingredient_id) ?? [];
       list.push(row);
       byIngredient.set(row.ingredient_id, list);
@@ -39,9 +40,11 @@ export function alignIngredientOccurrences<T extends ComparisonIngredientRow>(
       for (const [ordinal, row] of lines.entries()) {
         const note = noteKey(row.note);
         const exact = note
-          ? existing.find((s) =>
-              !assigned.has(s.id) &&
-              [...s.byVersion.values()].some((v) => noteKey(v.note) === note))
+          ? existing.find(
+              (s) =>
+                !assigned.has(s.id) &&
+                [...s.byVersion.values()].some((v) => noteKey(v.note) === note),
+            )
           : undefined;
         if (exact) {
           exact.byVersion.set(version.id, row);
@@ -51,8 +54,9 @@ export function alignIngredientOccurrences<T extends ComparisonIngredientRow>(
       for (const { row, ordinal } of unmatched) {
         // Notes may be newly edited, or absent; keep ordinal identity as fallback.
         const target =
-          (existing[ordinal] && !assigned.has(existing[ordinal]!.id) ? existing[ordinal] : undefined) ??
-          existing.find((s) => !assigned.has(s.id));
+          (existing[ordinal] && !assigned.has(existing[ordinal]!.id)
+            ? existing[ordinal]
+            : undefined) ?? existing.find((s) => !assigned.has(s.id));
         if (target) {
           target.byVersion.set(version.id, row);
           assigned.add(target.id);
@@ -71,8 +75,12 @@ export function alignIngredientOccurrences<T extends ComparisonIngredientRow>(
       slots.set(ingredientId, existing);
     }
   });
-  return [...slots.values()].flat().sort(
-    (a, b) => a.firstSeenAt - b.firstSeenAt ||
-      a.sortOrder - b.sortOrder || a.id.localeCompare(b.id),
-  );
+  return [...slots.values()]
+    .flat()
+    .sort(
+      (a, b) =>
+        a.firstSeenAt - b.firstSeenAt ||
+        a.sortOrder - b.sortOrder ||
+        a.id.localeCompare(b.id),
+    );
 }
