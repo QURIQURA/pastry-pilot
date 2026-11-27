@@ -2779,3 +2779,49 @@ export const archivedVersionsQuery = () =>
           .order("updated_at", { ascending: false }),
       ) as unknown as ArchivedVersionRow[],
   });
+
+export const formulaVersionResearchEvidenceQuery = (versionId: string) =>
+  queryOptions({
+    queryKey: ["formula_version_research_evidence", versionId],
+    queryFn: async () => {
+      const [experimentResponse, selectionResponse, observationResponse, popupResponse] = await Promise.all([
+        supabase
+          .from("formula_experiments")
+          .select("id, base_version_id, title, hypothesis, result_notes, result_height_mm, status")
+          .eq("version_id", versionId)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("work_session_formula_versions")
+          .select("work_sessions!inner(id, name, status, orders(id, order_number))")
+          .eq("formula_version_id", versionId),
+        supabase
+          .from("work_session_tasks")
+          .select("id, work_session_id, task_name, observation_status, observation_height_start_mm, observation_height_mid_mm, observation_height_end_mm, observation_temperature_c")
+          .eq("formula_version_id", versionId)
+          .or("observation_status.not.is.null,observation_height_start_mm.not.is.null,observation_height_mid_mm.not.is.null,observation_height_end_mm.not.is.null,observation_temperature_c.not.is.null")
+          .order("created_at", { ascending: false }),
+        supabase.from("orders").select("id, order_number, popup_plan").eq("order_kind", "POPUP"),
+      ]);
+      const sessions = new Map(
+        unwrap(selectionResponse).flatMap(({ work_sessions: session }) =>
+          session ? [[session.id, session] as const] : [],
+        ),
+      );
+      const popupOrders = new Map<string, { id: string; order_number: string }>();
+      for (const { id, order_number, popup_plan } of unwrap(popupResponse)) {
+        for (const { work_session_id } of readPopupPlan(popup_plan).items) {
+          if (work_session_id && sessions.has(work_session_id)) {
+            popupOrders.set(work_session_id, { id, order_number });
+          }
+        }
+      }
+      return {
+        experiments: unwrap(experimentResponse),
+        sessions: [...sessions.values()].map((session) => ({
+          ...session,
+          orders: session.orders ?? popupOrders.get(session.id),
+        })),
+        observations: unwrap(observationResponse),
+      };
+    },
+  });

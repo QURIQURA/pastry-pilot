@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { loadTs } from "./load-ts.mjs";
 
-const { nextProductionMerge, legacyBatchEntries } = await loadTs(
+const { nextProductionMerge, legacyBatchEntries, keepProductionBatchesTogether } = await loadTs(
   "src/lib/production-merge-state.ts",
 );
 
@@ -60,4 +60,29 @@ test("parse legacy state defensively", () => {
     ["first", "group"],
   ]);
   assert.deepEqual(legacyBatchEntries({ one: "bad" }), []);
+});
+
+test("a persisted batch stays complete across different local work-tab layouts", () => {
+  const batch = new Map([
+    ["cake", "cream"],
+    ["popup", "cream"],
+  ]);
+  assert.deepEqual(
+    keepProductionBatchesTogether(
+      [
+        ["cake", "sponge"],
+        ["popup", "tart"],
+      ],
+      batch,
+    ),
+    [["cake", "sponge", "popup"], ["tart"]],
+  );
+  assert.deepEqual(
+    keepProductionBatchesTogether([["sponge"], ["popup"], ["cake", "tart"]], batch),
+    [["sponge"], ["popup", "cake"], ["tart"]],
+  );
+  assert.deepEqual(keepProductionBatchesTogether([["cake"], ["popup"]], new Map()), [
+    ["cake"],
+    ["popup"],
+  ]);
 });
