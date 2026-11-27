@@ -1833,9 +1833,10 @@ function MatrixBodyRow({
   );
 }
 
-/** 2026-11-27 (#96) 전체 체크를 누른 순간을 생산 기록으로 — 그 단계의 타임라인 블록(1차=첫 블록,
- * 2차=둘째…; 블록이 모자라면 마지막 단계는 마지막 블록)에 타이머 기록이 없으면 시작과 종료를 같은
- * 시각으로 남겨 완료로 넘긴다. 이미 시작했거나 끝난 기록, 타이머가 도는 기록은 건드리지 않는다. */
+/** 2026-11-27 (#96) 바로 끝나는 작업(믹싱만 하는 쿠키 도우 등)은 마지막 단계 체크(단계가 하나면 "전체")를
+ * 누른 순간을 생산 기록으로 — 그 단계의 타임라인 블록(N차 = N번째 블록, 모자라면 마지막 블록)에 타이머
+ * 기록이 없을 때만 시작과 종료를 같은 시각으로 남겨 완료로 넘긴다. 앞 단계(1차 등) 체크는 기록을 건드리지
+ * 않고, 굽기처럼 타이머를 먼저 시작한 기록은 생산 기록에서 계속 돈다. */
 async function completeUntimedStageRecords(
   selectionIds: string[],
   stage: number,
@@ -1847,6 +1848,7 @@ async function completeUntimedStageRecords(
     .select("id, part_no, work_session_formula_version_id, work_session_task_id")
     .in("work_session_formula_version_id", selectionIds);
   if (error) throw error;
+  if (stage < lastStage) return [];
   const taskIds: string[] = [];
   for (const id of selectionIds) {
     const mine = (blocks ?? [])
@@ -1926,7 +1928,7 @@ function StageCheckAllButtons({
       });
       if (error) throw error;
       if (status !== "DONE") return;
-      // 체크한 순간을 생산 기록으로(타이머를 안 쓴 경우만) — 시작=종료=지금, 완료 목록으로.
+      // 마지막 단계 체크 = 바로 끝나는 작업의 완료(타이머를 안 쓴 기록만) — 시작=종료=지금, 완료 목록으로.
       const sessions = await completeUntimedStageRecords(
         [...new Set(rows.map((row) => row.work_session_formula_version_id))],
         stage,
@@ -1967,7 +1969,9 @@ function StageCheckAllButtons({
                 ? `저장 실패: ${(setStage.error as Error).message}`
                 : allDone
                   ? `${label} 체크 모두 해제`
-                  : `${label} 재료 ${stageCells.length}개 모두 체크 — 타이머 기록이 없으면 지금 시각으로 완료 기록`
+                  : stage === stages[stages.length - 1]
+                    ? `${label} 재료 ${stageCells.length}개 모두 체크 — 타이머를 안 썼으면 지금 시각으로 완료 기록`
+                    : `${label} 재료 ${stageCells.length}개 모두 체크`
             }
             onClick={() => setStage.mutate({ stage, status: allDone ? "NOT_STARTED" : "DONE" })}
           >
