@@ -1,3 +1,4 @@
+import { keepProductionBatchesTogether } from "@/lib/production-merge-state";
 import {
   useEffect,
   useMemo,
@@ -416,10 +417,13 @@ export function ProductionDashboard() {
   const activeTab = Math.min(workTab, storedTabs.length - 1);
   const itemsById = new Map(dayWorkItems.map((item) => [item.rowId, item]));
   const assigned = new Set(storedTabs.flat());
-  const tabItems = storedTabs.map((ids, index) => [
-    ...ids.flatMap((id) => itemsById.get(id) ?? []),
-    ...(index === 0 ? dayWorkItems.filter((item) => !assigned.has(item.rowId)) : []),
-  ]);
+  const tabItems = keepProductionBatchesTogether(
+    storedTabs.map((ids, index) => [
+      ...ids.filter((id) => itemsById.has(id)),
+      ...(index === 0 ? dayWorkItems.filter((item) => !assigned.has(item.rowId)).map((item) => item.rowId) : []),
+    ]),
+    batchBySelection,
+  ).map((ids) => ids.map((id) => itemsById.get(id)!));
   const activeItems = tabItems[activeTab] ?? [];
   const updateTabs = (next: string[][]) => setWorkTabs((prev) => ({ ...prev, [date]: next }));
   const taskQueries = useQueries({
