@@ -6,7 +6,6 @@ import {
   cakeSizeLayersQuery,
   cakeSizesQuery,
   currentUserId,
-  formulasQuery,
   mouldsQuery,
   type CakeSizeLayer,
   type CakeSizeLayerComponent,
@@ -21,6 +20,7 @@ import {
   customSpecSummary,
   layerSizeText,
 } from "@/lib/custom-spec";
+import { FormulaPicker } from "./FormulaPicker";
 import { SectionCard, buttonClass, inputClass, selectClass } from "./ui";
 
 const STORAGE_KEY = "pilot.customSpec.selected";
@@ -37,7 +37,6 @@ export function CustomSpecManager() {
   const sizes = useQuery(cakeSizesQuery());
   const layers = useQuery(cakeSizeLayersQuery());
   const parts = useQuery(cakeSizeLayerComponentsQuery());
-  const formulas = useQuery(formulasQuery());
   const moulds = useQuery(mouldsQuery());
   const usage = useQuery({
     queryKey: ["cake_size_usage"],
@@ -281,7 +280,6 @@ export function CustomSpecManager() {
     .filter(Boolean) as Error[];
   const loadError = (layers.error ?? parts.error) as Error | null;
 
-  const formulaOptions = [...(formulas.data ?? [])].sort((a, b) => a.name.localeCompare(b.name));
   const mouldOptions = moulds.data ?? [];
   const specLayers = selected ? layersOf(selected.id) : [];
   const used = selected ? (usage.data?.[selected.id] ?? 0) : 0;
@@ -538,24 +536,17 @@ export function CustomSpecManager() {
                             </option>
                           ))}
                         </select>
-                        <select
-                          aria-label="레시피"
-                          className={`${selectClass} min-w-[12rem] flex-1`}
+                        <FormulaPicker
+                          key={part.slot}
+                          slot={part.slot}
                           value={part.formula_id ?? ""}
-                          onChange={(e) =>
+                          onChange={(formulaId) =>
                             updatePart.mutate({
                               id: part.id,
-                              patch: { formula_id: e.target.value || null },
+                              patch: { formula_id: formulaId || null },
                             })
                           }
-                        >
-                          <option value="">— RECIPE —</option>
-                          {formulaOptions.map((f) => (
-                            <option key={f.id} value={f.id}>
-                              {f.name}
-                            </option>
-                          ))}
-                        </select>
+                        />
                         <select
                           aria-label="몰드"
                           className={`${selectClass} !w-32`}
