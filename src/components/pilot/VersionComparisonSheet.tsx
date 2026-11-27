@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   DndContext,
   PointerSensor,
@@ -19,10 +19,16 @@ import { CSS } from "@dnd-kit/utilities";
 import { GripVertical } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { supabase } from "@/integrations/supabase/client";
-import { versionIngredientsQuery, type VersionIngredientRow } from "@/lib/queries";
+import {
+  baseWeightsQuery,
+  mouldsQuery,
+  versionIngredientsQuery,
+  type VersionIngredientRow,
+} from "@/lib/queries";
 import { fmtNumber, toGrams, versionLabel } from "@/lib/formula";
 import { ingredientDisplayName } from "@/lib/pilot";
-import { costPerGram, fmtCurrency } from "@/lib/cost";
+import { computeLineCosts, costPerGram, fmtCurrency } from "@/lib/cost";
+import { mouldAbbr } from "@/lib/component-size";
 import { cn } from "@/lib/utils";
 import { alignIngredientOccurrences } from "@/lib/version-comparison-occurrences";
 
@@ -70,7 +76,13 @@ interface SheetRow {
 export function VersionComparisonSheet({
   versions,
 }: {
-  versions: { id: string; version_number: number; status: string }[];
+  versions: {
+    id: string;
+    version_number: number;
+    status: string;
+    default_mould_id?: string | null;
+    default_base_weight_id?: string | null;
+  }[];
 }) {
   // 버전 순서(오래된 → 최신)로 정렬 — 데이터 자체의 기본 순서. 사용자가 드래그하면
   // columnOrder가 이 기본 순서를 오버라이드한다.
@@ -83,6 +95,36 @@ export function VersionComparisonSheet({
   const versionIngredientQueries = useQueries({
     queries: baseVersions.map((v) => versionIngredientsQuery(v.id)),
   });
+
+  // 2026-11-27 사용자 요청: "포뮬라 버전명 바로 아래 칼럼에 total weight랑 기준 몰드 work session처럼
+  // 표기" — 버전 헤더 바로 아래에 Work Session 계량 매트릭스와 같은 모양의 "몰드"/"전체 중량" 행을 둔다.
+  // 몰드는 formula_versions.default_mould_id(없으면 default_base_weight_id의 기준중량),
+  // 전체 중량은 CURRENT FORMULA 요약의 TOTAL WEIGHT와 같은 계산(computeLineCosts.totalGrams).
+  const moulds = useQuery(mouldsQuery());
+  const baseWeights = useQuery(baseWeightsQuery());
+  const versionMeta = useMemo(() => {
+    const mouldById = new Map((moulds.data ?? []).map((m) => [m.id, m]));
+    const baseWeightById = new Map((baseWeights.data ?? []).map((b) => [b.id, b]));
+    const meta = new Map<string, { basis: string | null; totalGrams: number }>();
+    baseVersions.forEach((v, idx) => {
+      const mould = v.default_mould_id ? mouldById.get(v.default_mould_id) : undefined;
+      const baseWeight = v.default_base_weight_id
+        ? baseWeightById.get(v.default_base_weight_id)
+        : undefined;
+      const basis = mould
+        ? `${mouldAbbr(mould)}${
+            mould.reference_weight_g != null
+              ? ` · ${fmtNumber(Number(mould.reference_weight_g), 0)}g`
+              : ""
+          }`
+        : baseWeight
+          ? `${baseWeight.name}${baseWeight.weight_g != null ? ` · ${baseWeight.weight_g}g` : ""}`
+          : null;
+      const rows = versionIngredientQueries[idx]?.data ?? [];
+      meta.set(v.id, { basis, totalGrams: computeLineCosts(rows).totalGrams });
+    });
+    return meta;
+  }, [baseVersions, versionIngredientQueries, moulds.data, baseWeights.data]);
 
   // 전체 버전에 등장한 재료를 하나의 행 목록으로 합친다. 순서는 가장 먼저 등장한 버전에서의
   // sort_order를 기준으로 — 나중 버전에서만 추가된 재료는 그 뒤에 자연스럽게 붙는다.
@@ -368,6 +410,38 @@ export function VersionComparisonSheet({
                   ))}
                 </SortableContext>
                 <th key={FILLER_COL_ID} className="border-l border-dashed border-border" />
+              </tr>
+              {/* Work Session 계량 매트릭스 헤더의 "몰드"/"전체 중량" 행과 같은 모양 */}
+              <tr className="border-b border-border bg-secondary">
+                <th className="label-caps px-3 py-1 text-right text-[11px]">몰드</th>
+                <td className="border-l border-dashed border-border" />
+                {displayVersions.map((v) => {
+                  const basis = versionMeta.get(v.id)?.basis;
+                  return (
+                    <td
+                      key={v.id}
+                      className="whitespace-nowrap border-l border-dashed border-border px-3 py-1 text-xs"
+                    >
+                      {basis ?? <span className="text-muted-foreground">미지정</span>}
+                    </td>
+                  );
+                })}
+                <td className="border-l border-dashed border-border" />
+              </tr>
+              <tr className="border-b border-border bg-secondary">
+                <th className="label-caps px-3 py-2 text-right text-xs text-muted-foreground">
+                  전체 중량
+                </th>
+                <td className="border-l border-dashed border-border" />
+                {displayVersions.map((v) => (
+                  <td
+                    key={v.id}
+                    className="whitespace-nowrap border-l border-dashed border-border px-3 py-2 text-sm font-semibold tabular-nums"
+                  >
+                    {fmtNumber(versionMeta.get(v.id)?.totalGrams ?? 0, 0)}g
+                  </td>
+                ))}
+                <td className="border-l border-dashed border-border" />
               </tr>
             </thead>
           </DndContext>
