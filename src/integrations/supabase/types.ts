@@ -1434,6 +1434,11 @@ export type Database = {
           formula_id: string
           id: string
           notes: string | null
+          observations: string | null
+          test_results: string | null
+          next_improvement: string | null
+          target_improvement: string | null
+          version_title: string | null
           status: Database["public"]["Enums"]["formula_status"]
           updated_at: string
           user_id: string
@@ -1454,6 +1459,11 @@ export type Database = {
           formula_id: string
           id?: string
           notes?: string | null
+          observations?: string | null
+          test_results?: string | null
+          next_improvement?: string | null
+          target_improvement?: string | null
+          version_title?: string | null
           status?: Database["public"]["Enums"]["formula_status"]
           updated_at?: string
           user_id: string
@@ -1474,6 +1484,11 @@ export type Database = {
           formula_id?: string
           id?: string
           notes?: string | null
+          observations?: string | null
+          test_results?: string | null
+          next_improvement?: string | null
+          target_improvement?: string | null
+          version_title?: string | null
           status?: Database["public"]["Enums"]["formula_status"]
           updated_at?: string
           user_id?: string
