@@ -161,7 +161,9 @@ export function buildWeighingGroups(params: {
       });
     });
     return {
-      rowKey: occurrence.id,
+      // Preserve historical row IDs for the first occurrence so existing view
+      // preferences remain stable; additional uses of one ingredient get new keys.
+      rowKey: occurrence.id.endsWith("::0") ? occurrence.ingredientId : occurrence.id,
       ingredientId: occurrence.ingredientId,
       ingredientName,
       cells,
