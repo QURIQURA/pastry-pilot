@@ -92,6 +92,7 @@ import {
   primaryButtonClass,
   selectClass,
 } from "@/components/pilot/ui";
+import { readTimers } from "@/lib/task-timers";
 
 /** 세션 하나의 작업 화면(코어/데코/계량/워크플로/노트). 세션 상세 페이지와 PRODUCTION DASHBOARD의
  * 타임라인 아래 박스들이 같이 쓴다. embedded=true면 페이지 전용 요소(브레드크럼, 작업일정 박스)를 숨긴다. */
@@ -1832,6 +1833,55 @@ function MatrixBodyRow({
   );
 }
 
+/** 2026-11-27 (#96) 전체 체크를 누른 순간을 생산 기록으로 — 그 단계의 타임라인 블록(1차=첫 블록,
+ * 2차=둘째…; 블록이 모자라면 마지막 단계는 마지막 블록)에 타이머 기록이 없으면 시작과 종료를 같은
+ * 시각으로 남겨 완료로 넘긴다. 이미 시작했거나 끝난 기록, 타이머가 도는 기록은 건드리지 않는다. */
+async function completeUntimedStageRecords(
+  selectionIds: string[],
+  stage: number,
+  lastStage: number,
+): Promise<string[]> {
+  if (selectionIds.length === 0) return [];
+  const { data: blocks, error } = await supabase
+    .from("work_blocks")
+    .select("id, part_no, work_session_formula_version_id, work_session_task_id")
+    .in("work_session_formula_version_id", selectionIds);
+  if (error) throw error;
+  const taskIds: string[] = [];
+  for (const id of selectionIds) {
+    const mine = (blocks ?? [])
+      .filter((b) => b.work_session_formula_version_id === id)
+      .sort((a, b) => a.part_no - b.part_no);
+    const target = mine[stage - 1] ?? (stage === lastStage ? mine[mine.length - 1] : undefined);
+    if (target?.work_session_task_id) taskIds.push(target.work_session_task_id);
+  }
+  if (taskIds.length === 0) return [];
+  const { data: tasks, error: taskError } = await supabase
+    .from("work_session_tasks")
+    .select("*")
+    .in("id", taskIds);
+  if (taskError) throw taskError;
+  const iso = new Date().toISOString();
+  const sessions = new Set<string>();
+  for (const task of tasks ?? []) {
+    const timerUsed = readTimers(task).some((t) => t.started_at);
+    if (task.status === "DONE" || task.actual_started_at || timerUsed) continue;
+    const { error: updateError } = await supabase
+      .from("work_session_tasks")
+      .update({ status: "DONE", actual_started_at: iso, completed_at: iso })
+      .eq("id", task.id)
+      .eq("updated_at", task.updated_at);
+    if (updateError) throw updateError;
+    sessions.add(task.work_session_id);
+    await supabase
+      .from("work_sessions")
+      .update({ started_at: iso })
+      .eq("id", task.work_session_id)
+      .is("started_at", null);
+  }
+  return [...sessions];
+}
+
 /** 한 포뮬라(열)의 재료를 단계(1차, 2차…)별로 한 번에 체크/해제하는 버튼 — 단계가 하나면 "전체" 하나. */
 function StageCheckAllButtons({
   sessionId,
@@ -1842,6 +1892,7 @@ function StageCheckAllButtons({
   cells: ReturnType<typeof buildWeighingGroups>[number]["cells"];
   onChanged: () => void;
 }) {
+  const queryClient = useQueryClient();
   const stages = [...new Set(cells.map((cell) => cell.stage))].sort((a, b) => a - b);
   const isChecked = (status: WorkSessionProgressStatus) =>
     status === "DONE" || status === "SKIPPED";
@@ -1874,6 +1925,21 @@ function StageCheckAllButtons({
         onConflict: "work_session_formula_version_id,formula_version_ingredient_id",
       });
       if (error) throw error;
+      if (status !== "DONE") return;
+      // 체크한 순간을 생산 기록으로(타이머를 안 쓴 경우만) — 시작=종료=지금, 완료 목록으로.
+      const sessions = await completeUntimedStageRecords(
+        [...new Set(rows.map((row) => row.work_session_formula_version_id))],
+        stage,
+        stages[stages.length - 1] ?? 1,
+      );
+      for (const sid of sessions) {
+        await queryClient.invalidateQueries({ queryKey: ["work_session_tasks", sid] });
+        void syncWorkSessionToPlanner(sid);
+      }
+      if (sessions.length) {
+        await queryClient.invalidateQueries({ queryKey: ["work_sessions"] });
+        await queryClient.invalidateQueries({ queryKey: ["work_blocks"] });
+      }
     },
     onSuccess: onChanged,
   });
@@ -1901,7 +1967,7 @@ function StageCheckAllButtons({
                 ? `저장 실패: ${(setStage.error as Error).message}`
                 : allDone
                   ? `${label} 체크 모두 해제`
-                  : `${label} 재료 ${stageCells.length}개 모두 체크`
+                  : `${label} 재료 ${stageCells.length}개 모두 체크 — 타이머 기록이 없으면 지금 시각으로 완료 기록`
             }
             onClick={() => setStage.mutate({ stage, status: allDone ? "NOT_STARTED" : "DONE" })}
           >
