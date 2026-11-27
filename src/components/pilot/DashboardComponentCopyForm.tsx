@@ -118,7 +118,9 @@ export function DashboardComponentCopyForm({
         if (svErr) throw svErr;
         const { data: srcIngredients, error: siErr } = await supabase
           .from("formula_version_ingredients")
-          .select("ingredient_id, amount, unit, note, sort_order, secondary_amount, secondary_unit")
+          .select(
+            "ingredient_id, amount, unit, note, sort_order, secondary_amount, secondary_unit, stage",
+          )
           .eq("formula_version_id", latest.id);
         if (siErr) throw siErr;
 
@@ -166,6 +168,7 @@ export function DashboardComponentCopyForm({
               sort_order: row.sort_order,
               secondary_amount: row.secondary_amount,
               secondary_unit: row.secondary_unit,
+              stage: row.stage ?? 1,
               amount_source: "copied",
             })),
           );
