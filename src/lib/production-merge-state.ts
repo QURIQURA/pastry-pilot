@@ -26,8 +26,6 @@ export function legacyBatchEntries(storage: unknown): [string, string][] {
   if (!Array.isArray(storage)) return [];
   return storage.filter(
     (item): item is [string, string] =>
-      Array.isArray(item) &&
-      item.length === 2 &&
-      item.every((value) => typeof value === "string"),
+      Array.isArray(item) && item.length === 2 && item.every((value) => typeof value === "string"),
   );
 }
