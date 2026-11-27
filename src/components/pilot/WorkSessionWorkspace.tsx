@@ -1159,7 +1159,10 @@ function WeighingView({
       ];
       const cells = members.flatMap((c) => cellsBySelection.get(c.selectionId) ?? []);
       const lastStage = cells.reduce((max, cell) => Math.max(max, cell.stage), 1);
-      const timerPart = rowIds.reduce((max, id) => Math.max(max, weighedPartByRow?.get(id) ?? 0), 0);
+      const timerPart = rowIds.reduce(
+        (max, id) => Math.max(max, weighedPartByRow?.get(id) ?? 0),
+        0,
+      );
       const allChecked = cells.length > 0 && cells.every((cell) => isChecked(cell.status));
       const timerDone =
         lastStage <= 1 ? rowIds.some((id) => weighedIds?.has(id)) : timerPart >= lastStage;
@@ -1493,6 +1496,31 @@ function WeighingView({
               ))}
               <td className="border-t border-l border-border bg-secondary" />
             </tr>
+            {/* 2026-11-27 (#94) 재료마다 ○를 누르기 번거로워서 — 포뮬라(열)마다 단계별로 한 번에 체크.
+                이미 그 단계가 다 체크돼 있으면 한 번 더 눌러 전체 해제. */}
+            <tr>
+              <th className="label-caps sticky left-0 z-10 border-t border-r border-border bg-secondary px-3 py-1.5 text-right text-xs text-muted-foreground">
+                전체 체크
+              </th>
+              {displayColumns.map((col) => (
+                <td
+                  key={col.selectionId}
+                  className={cn(
+                    "border-t border-l border-border bg-secondary px-2 py-1.5 text-left",
+                    weighedColumnIds.has(col.selectionId) && "opacity-40",
+                  )}
+                >
+                  <StageCheckAllButtons
+                    sessionId={col.sessionId ?? sessionId}
+                    cells={groups.flatMap((group) =>
+                      group.cells.filter((cell) => cell.selectionId === col.selectionId),
+                    )}
+                    onChanged={onProgressChanged}
+                  />
+                </td>
+              ))}
+              <td className="border-t border-l border-border bg-secondary" />
+            </tr>
           </thead>
         </DndContext>
         <DndContext
@@ -1801,6 +1829,87 @@ function MatrixBodyRow({
           이어지도록 빈 셀을 하나 더 둔다. */}
       <td className="border-l border-border" style={{ height }} />
     </tr>
+  );
+}
+
+/** 한 포뮬라(열)의 재료를 단계(1차, 2차…)별로 한 번에 체크/해제하는 버튼 — 단계가 하나면 "전체" 하나. */
+function StageCheckAllButtons({
+  sessionId,
+  cells,
+  onChanged,
+}: {
+  sessionId: string;
+  cells: ReturnType<typeof buildWeighingGroups>[number]["cells"];
+  onChanged: () => void;
+}) {
+  const stages = [...new Set(cells.map((cell) => cell.stage))].sort((a, b) => a - b);
+  const isChecked = (status: WorkSessionProgressStatus) =>
+    status === "DONE" || status === "SKIPPED";
+  const setStage = useMutation({
+    mutationFn: async ({ stage, status }: { stage: number; status: WorkSessionProgressStatus }) => {
+      const user_id = await currentUserId();
+      const rows = cells
+        .filter((cell) => cell.stage === stage)
+        .flatMap((cell) =>
+          (
+            cell.members ?? [
+              {
+                selectionId: cell.selectionId,
+                sessionId,
+                status: cell.progressStatus,
+                note: cell.note,
+              },
+            ]
+          ).map((member) => ({
+            user_id,
+            work_session_id: member.sessionId,
+            work_session_formula_version_id: member.selectionId,
+            formula_version_ingredient_id: cell.ingredientLineId,
+            status,
+            note: member.note,
+          })),
+        );
+      if (rows.length === 0) return;
+      const { error } = await supabase.from("work_session_progress").upsert(rows, {
+        onConflict: "work_session_formula_version_id,formula_version_ingredient_id",
+      });
+      if (error) throw error;
+    },
+    onSuccess: onChanged,
+  });
+  if (cells.length === 0) return <span className="text-muted-foreground">—</span>;
+  return (
+    <div className="flex flex-wrap gap-1">
+      {stages.map((stage) => {
+        const stageCells = cells.filter((cell) => cell.stage === stage);
+        const allDone = stageCells.every((cell) => isChecked(cell.progressStatus));
+        const label = stages.length > 1 ? `${stage}차` : "전체";
+        return (
+          <button
+            key={stage}
+            type="button"
+            className={cn(
+              "label-caps border px-1.5 py-0.5 text-[10px] disabled:opacity-40",
+              allDone
+                ? "border-foreground bg-foreground text-background"
+                : "border-border bg-background hover:border-foreground",
+            )}
+            disabled={setStage.isPending}
+            aria-pressed={allDone}
+            title={
+              setStage.isError
+                ? `저장 실패: ${(setStage.error as Error).message}`
+                : allDone
+                  ? `${label} 체크 모두 해제`
+                  : `${label} 재료 ${stageCells.length}개 모두 체크`
+            }
+            onClick={() => setStage.mutate({ stage, status: allDone ? "NOT_STARTED" : "DONE" })}
+          >
+            {allDone ? "✓" : "○"} {label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
