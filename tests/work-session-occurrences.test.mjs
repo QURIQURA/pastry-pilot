@@ -9,13 +9,7 @@ const { buildWeighingGroups } = await loadTs("src/lib/work-session.ts", {
   "@/lib/pilot": "export const ingredientDisplayName = (item) => item?.name ?? '—';",
 });
 
-const line = (
-  id,
-  ingredient_id,
-  amount,
-  sort_order,
-  note,
-) => ({
+const line = (id, ingredient_id, amount, sort_order, note) => ({
   id,
   ingredient_id,
   amount,
@@ -72,17 +66,12 @@ test("Work View keeps hot and chilled cream as separate rows in merged V2 column
   assert.equal(creams[0].cells[0].progressStatus, "DONE");
   assert.equal(creams[1].cells[0].progressStatus, "NOT_STARTED");
   assert.equal(groups.flatMap((g) => g.cells).length, 6);
-  const total = groups
-    .flatMap((g) => g.cells)
-    .reduce((sum, cell) => sum + cell.workingAmount, 0);
+  const total = groups.flatMap((g) => g.cells).reduce((sum, cell) => sum + cell.workingAmount, 0);
   assert.ok(Math.abs(total - (1660 / 1050) * (150 + 225 + 40)) < 0.00001);
 });
 
 test("Work View does not drop repeated ingredient without notes", () => {
-  const rows = [
-    line("a", "egg", 70, 0, null),
-    line("b", "egg", 30, 1, null),
-  ];
+  const rows = [line("a", "egg", 70, 0, null), line("b", "egg", 30, 1, null)];
   const groups = buildWeighingGroups({
     selections: [selections[0]],
     ingredientsByVersion: { v2: rows },
