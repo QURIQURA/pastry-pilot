@@ -82,6 +82,8 @@ export interface WeighingCell {
   secondaryUnit: string | null;
   /** 포뮬라 재료 줄에 적어둔 코멘트(예: 유청 분리한 것) — 계량 진행 메모(note)와는 별개 */
   lineNote: string | null;
+  /** 1 = 처음부터, 2 = 나중에 넣는 재료(2차). 두 단계 포뮬라의 계량 완료 판단에 쓴다. */
+  stage: number;
 }
 
 export interface WeighingGroup {
@@ -158,6 +160,7 @@ export function buildWeighingGroups(params: {
         secondaryAmount: line.secondary_amount != null ? Number(line.secondary_amount) : null,
         secondaryUnit: line.secondary_unit ?? null,
         lineNote: line.note?.trim() || null,
+        stage: Number(line.stage ?? 1) >= 2 ? 2 : 1,
       });
     });
     return {
@@ -170,6 +173,8 @@ export function buildWeighingGroups(params: {
       minCol,
       maxCol,
       firstSortOrder: occurrence.sortOrder,
+      // 2차(나중에 넣는) 재료 줄은 같은 열 묶음 안에서 1차 재료 뒤로 — 계량 순서대로 보이게.
+      lateStage: cells.length > 0 && cells.every((cell) => cell.stage >= 2) ? 1 : 0,
     };
   });
   return rows
@@ -177,10 +182,13 @@ export function buildWeighingGroups(params: {
       (a, b) =>
         a.minCol - b.minCol ||
         a.maxCol - b.maxCol ||
+        a.lateStage - b.lateStage ||
         a.firstSortOrder - b.firstSortOrder ||
         a.rowKey.localeCompare(b.rowKey),
     )
-    .map(({ minCol: _min, maxCol: _max, firstSortOrder: _sort, ...group }) => group);
+    .map(
+      ({ minCol: _min, maxCol: _max, firstSortOrder: _sort, lateStage: _late, ...group }) => group,
+    );
 }
 
 /** Multiplier History에 남길 스냅샷 — 적용 당시 계산된 working quantity를 그대로 기록한다 */

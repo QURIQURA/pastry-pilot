@@ -480,6 +480,18 @@ function FormulaDetailPage() {
     onSuccess: invalidate,
   });
 
+  /** 2026-11-27 (#92) 재료를 2차(나중에 넣는 재료)로 표시/해제 — 바로 저장한다 */
+  const setRowStage = useMutation({
+    mutationFn: async ({ id, stage }: { id: string; stage: number }) => {
+      const { error } = await supabase
+        .from("formula_version_ingredients")
+        .update({ stage })
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: invalidate,
+  });
+
   const removeRow = useMutation({
     mutationFn: async (id: string) => {
       const { error } = await supabase.from("formula_version_ingredients").delete().eq("id", id);
@@ -819,6 +831,7 @@ function FormulaDetailPage() {
             note: row.note,
             secondary_amount: row.secondary_amount,
             secondary_unit: row.secondary_unit,
+            stage: row.stage ?? 1,
             // 새 버전으로 복사된 값은 'copied'로 시작, 수정 시 'manual'이 된다
             amount_source: "copied",
           })),
@@ -1332,6 +1345,9 @@ function FormulaDetailPage() {
                         draft={draft?.rows[row.id] ?? null}
                         onDraftChange={(patch) => patchRowDraft(row.id, patch)}
                         onRemove={() => removeRow.mutate(row.id)}
+                        onStageToggle={() =>
+                          setRowStage.mutate({ id: row.id, stage: row.stage === 2 ? 1 : 2 })
+                        }
                       />
                     ))}
                   </tbody>
@@ -1699,6 +1715,7 @@ function UnifiedIngredientRow({
   draft,
   onDraftChange,
   onRemove,
+  onStageToggle,
 }: {
   row: VersionIngredientRow;
   locked: boolean;
@@ -1709,6 +1726,8 @@ function UnifiedIngredientRow({
   draft: RowDraft | null;
   onDraftChange: (patch: Partial<RowDraft>) => void;
   onRemove: () => void;
+  /** 2차(나중에 넣는 재료) 표시를 켜고 끈다 — 누르면 바로 저장된다 */
+  onStageToggle?: () => void;
 }) {
   const [targetPctOpen, setTargetPctOpen] = useState(false);
   const [targetPct, setTargetPct] = useState("");
@@ -1797,6 +1816,34 @@ function UnifiedIngredientRow({
           (배합을 고치려는 클릭이 엉뚱하게 재료 상세 페이지로 튕겨나가던 문제 수정) */}
       <td className="break-words px-2 py-1 text-sm">
         <span>{ing ? ingredientDisplayName(ing) : "—"}</span>
+        {/* 2026-11-27 (#92) 두 단계 포뮬라 — 나중에 넣는 재료(예: 가나슈 숙성 후 크림치즈). 계량 표에서
+            2차 계량을 따로 확인한다. 편집 중에는 눌러서 켜고 끌 수 있다. */}
+        {editing && !locked && onStageToggle ? (
+          <button
+            type="button"
+            className={cn(
+              "label-caps ml-2 px-1.5 py-0.5 text-[10px]",
+              row.stage === 2
+                ? "border border-foreground bg-foreground text-background"
+                : "border border-dashed border-border text-muted-foreground hover:bg-secondary",
+            )}
+            title={
+              row.stage === 2
+                ? "2차 재료 — 눌러서 처음부터 넣는 재료로 되돌리기"
+                : "나중 단계(2차)에 넣는 재료로 표시"
+            }
+            aria-pressed={row.stage === 2}
+            onClick={onStageToggle}
+          >
+            2차
+          </button>
+        ) : (
+          row.stage === 2 && (
+            <span className="label-caps ml-2 border border-foreground px-1.5 py-0.5 text-[10px]">
+              2차
+            </span>
+          )
+        )}
         {isFunctional && (
           <span className="label-caps ml-2 border border-foreground px-1.5 py-0.5 text-[10px]">
             FUNCTIONAL

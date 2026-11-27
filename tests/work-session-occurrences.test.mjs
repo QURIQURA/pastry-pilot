@@ -87,3 +87,26 @@ test("Work View does not drop repeated ingredient without notes", () => {
     100,
   );
 });
+
+test("Two-stage formula: late-addition (2차) rows carry stage and sort after stage-1 rows", () => {
+  const chantilly = [
+    { ...line("cc", "cream-cheese", 411, 1, null), stage: 2 },
+    line("wc", "white-couverture", 137, 2, null),
+    line("tc", "thickened-cream", 137, 3, null),
+  ];
+  const groups = buildWeighingGroups({
+    selections: [
+      { selectionId: "s1", formulaVersionId: "ch", formulaName: "Chantilly", multiplier: 1, sortOrder: 1 },
+    ],
+    ingredientsByVersion: { ch: chantilly },
+    progressBySelectionAndLine: {},
+  });
+  assert.deepEqual(
+    groups.map((g) => g.ingredientId),
+    ["white-couverture", "thickened-cream", "cream-cheese"],
+  );
+  assert.deepEqual(
+    groups.map((g) => g.cells[0].stage),
+    [1, 1, 2],
+  );
+});

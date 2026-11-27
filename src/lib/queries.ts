@@ -719,6 +719,8 @@ export interface VersionIngredientRow {
   /** 표시 전용 보조 계량 (예: 3개, 1Tbsp) — %/배수 계산에는 관여하지 않는다 */
   secondary_amount: number | null;
   secondary_unit: string | null;
+  /** 1 = 처음부터, 2 = 나중에 넣는 재료(2차, 예: 가나슈 숙성 후 크림치즈). 2026-11-27 */
+  stage: number;
   ingredient_id: string;
   ingredients: IngredientRow;
 }
@@ -733,7 +735,7 @@ export const versionIngredientsQuery = (versionId: string | null) =>
         await supabase
           .from("formula_version_ingredients")
           .select(
-            "id, amount, unit, sort_order, note, amount_source, secondary_amount, secondary_unit, ingredient_id, ingredients(*, ingredient_function_links(function_id, ingredient_functions(*)))",
+            "id, amount, unit, sort_order, note, amount_source, secondary_amount, secondary_unit, stage, ingredient_id, ingredients(*, ingredient_function_links(function_id, ingredient_functions(*)))",
           )
           .eq("formula_version_id", versionId)
           .order("sort_order"),
@@ -892,7 +894,7 @@ export const versionIngredientsBulkQuery = (versionIds: string[]) =>
         await supabase
           .from("formula_version_ingredients")
           .select(
-            "id, amount, unit, sort_order, note, amount_source, secondary_amount, secondary_unit, ingredient_id, formula_version_id, ingredients(*, ingredient_function_links(function_id, ingredient_functions(*)))",
+            "id, amount, unit, sort_order, note, amount_source, secondary_amount, secondary_unit, stage, ingredient_id, formula_version_id, ingredients(*, ingredient_function_links(function_id, ingredient_functions(*)))",
           )
           .in("formula_version_id", versionIds)
           .order("sort_order"),

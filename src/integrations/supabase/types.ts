@@ -1368,6 +1368,7 @@ export type Database = {
           secondary_amount: number | null
           secondary_unit: string | null
           sort_order: number
+          stage: number
           unit: string
           updated_at: string
           user_id: string
@@ -1383,6 +1384,7 @@ export type Database = {
           secondary_amount?: number | null
           secondary_unit?: string | null
           sort_order?: number
+          stage?: number
           unit?: string
           updated_at?: string
           user_id: string
@@ -1398,6 +1400,7 @@ export type Database = {
           secondary_amount?: number | null
           secondary_unit?: string | null
           sort_order?: number
+          stage?: number
           unit?: string
           updated_at?: string
           user_id?: string

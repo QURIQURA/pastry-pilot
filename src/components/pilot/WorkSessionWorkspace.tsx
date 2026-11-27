@@ -1077,12 +1077,16 @@ function WeighingView({
   onEditPlan,
   getBatchAction,
   weighedIds,
+  stage2WeighedIds,
 }: {
   sessionId: string;
   groups: ReturnType<typeof buildWeighingGroups>;
   columns: WeighingColumn[];
   /** 계량이 끝나 다음 단계(오븐 타이머 등)로 넘어간 선택(행) id — 해당 열은 흐리게, 맨 뒤로 */
   weighedIds?: ReadonlySet<string> | undefined;
+  /** 2차 블록(타임라인 2차 이후) 타이머가 시작됐거나 끝난 선택(행) id — 2차 재료가 있는 열은
+   * 이것으로만 타이머 기준 계량 완료를 판단한다(#92). */
+  stage2WeighedIds?: ReadonlySet<string> | undefined;
   onProgressChanged: () => void;
   onEditColumn?: (column: WeighingColumn) => void;
   onSelectColumn?: ((id: string) => void) | undefined;
@@ -1127,31 +1131,49 @@ function WeighingView({
   // 2026-11-27: 계량이 끝난 열(모든 재료 체크, 또는 생산 기록 타이머가 시작됨)은 흐리게 표시하고
   // 맨 뒤로 보낸다. 저장된 열 순서는 그대로 두고 표시만 바꾸므로, 다시 미완료가 되면 원래 자리로
   // 돌아온다. 블렌드 하위 열(groupKey)은 묶음 단위로 함께 판단하고 함께 움직인다.
-  const weighedColumnIds = useMemo(() => {
+  // 2026-11-27 (#92) 두 단계 포뮬라: 2차 재료가 있는 열은 1차만 끝나면 "1차 계량 완료 · 2차 대기"로
+  // 제자리에 두고, 2차까지 체크하거나 2차 블록 타이머가 시작돼야 계량 완료로 본다.
+  const { weighedColumnIds, stageWaitingColumnIds } = useMemo(() => {
     const unitOf = (c: WeighingColumn) => c.groupKey ?? c.selectionId;
     const unitColumns = new Map<string, WeighingColumn[]>();
     for (const c of columns) unitColumns.set(unitOf(c), [...(unitColumns.get(unitOf(c)) ?? []), c]);
-    const statusesBySelection = new Map<string, WorkSessionProgressStatus[]>();
+    const cellsBySelection = new Map<
+      string,
+      { status: WorkSessionProgressStatus; stage: number }[]
+    >();
     for (const group of groups)
       for (const cell of group.cells)
-        statusesBySelection.set(cell.selectionId, [
-          ...(statusesBySelection.get(cell.selectionId) ?? []),
-          cell.progressStatus,
+        cellsBySelection.set(cell.selectionId, [
+          ...(cellsBySelection.get(cell.selectionId) ?? []),
+          { status: cell.progressStatus, stage: cell.stage },
         ]);
+    const isChecked = (st: WorkSessionProgressStatus) => st === "DONE" || st === "SKIPPED";
     const done = new Set<string>();
+    const waiting = new Set<string>();
     for (const [unit, members] of unitColumns) {
       const rowIds = [
         unit,
         ...members.flatMap((c) => [c.selectionId, ...(c.members ?? []).map((m) => m.selectionId)]),
       ];
-      const statuses = members.flatMap((c) => statusesBySelection.get(c.selectionId) ?? []);
-      const allChecked =
-        statuses.length > 0 && statuses.every((st) => st === "DONE" || st === "SKIPPED");
-      if (allChecked || rowIds.some((id) => weighedIds?.has(id)))
+      const cells = members.flatMap((c) => cellsBySelection.get(c.selectionId) ?? []);
+      const allChecked = cells.length > 0 && cells.every((cell) => isChecked(cell.status));
+      const twoStage = cells.some((cell) => cell.stage >= 2);
+      const timerDone = rowIds.some((id) =>
+        twoStage ? stage2WeighedIds?.has(id) : weighedIds?.has(id),
+      );
+      if (allChecked || timerDone) {
         for (const c of members) done.add(c.selectionId);
+        continue;
+      }
+      if (!twoStage) continue;
+      const stage1Cells = cells.filter((cell) => cell.stage < 2);
+      const stage1Done =
+        (stage1Cells.length > 0 && stage1Cells.every((cell) => isChecked(cell.status))) ||
+        rowIds.some((id) => weighedIds?.has(id));
+      if (stage1Done) for (const c of members) waiting.add(c.selectionId);
     }
-    return done;
-  }, [columns, groups, weighedIds]);
+    return { weighedColumnIds: done, stageWaitingColumnIds: waiting };
+  }, [columns, groups, weighedIds, stage2WeighedIds]);
 
   const displayColumns = useMemo(() => {
     const byId = new Map(columns.map((c) => [c.selectionId, c]));
@@ -1332,6 +1354,7 @@ function WeighingView({
                     key={col.selectionId}
                     id={col.selectionId}
                     weighed={weighedColumnIds.has(col.selectionId)}
+                    stageWaiting={stageWaitingColumnIds.has(col.selectionId)}
                     formulaName={col.formulaName}
                     formulaId={col.formulaId}
                     versionId={col.formulaVersionId}
@@ -1546,10 +1569,13 @@ function MatrixColumnHeader({
   sourceLabel,
   mergeAction,
   weighed = false,
+  stageWaiting = false,
 }: {
   id: string;
   /** 계량 완료 — 헤더 내용을 흐리게(배경은 sticky 가림막이라 그대로 둔다) */
   weighed?: boolean;
+  /** 두 단계 포뮬라에서 1차 계량만 끝나고 2차 재료를 기다리는 중(#92) */
+  stageWaiting?: boolean;
   /** 블렌드(합성) 포뮬라의 원본 열이면 묶음 제목 — 첫 열에만 글자를 그리고 모든 원본 열 위에 같은 색 띠를 둔다 */
   groupLabel?: string | undefined;
   groupFirst?: boolean;
@@ -1646,6 +1672,14 @@ function MatrixColumnHeader({
           </p>
         )}
         {weighed && <p className="label-caps mt-1 text-[10px]">계량 완료</p>}
+        {!weighed && stageWaiting && (
+          <p
+            className="label-caps mt-1 text-[10px]"
+            title="나중에 넣는 2차 재료가 남아 있어요 — 2차까지 체크하거나 2차 블록 타이머를 시작하면 계량 완료"
+          >
+            1차 계량 완료 · 2차 대기
+          </p>
+        )}
       </div>
       {mergeAction && (
         <button
@@ -1862,6 +1896,14 @@ function WeighingMatrixCell({
       >
         {setProgress.isError ? "⚠" : PROGRESS_STATUS_ICON[cell.progressStatus]}
       </button>
+      {cell.stage >= 2 && (
+        <span
+          className="label-caps shrink-0 border border-foreground px-1 text-[10px] leading-4"
+          title="나중 단계(2차)에 넣는 재료"
+        >
+          2차
+        </span>
+      )}
       {cell.lineNote?.trim() && (
         <span className="group/note relative ml-1 inline-flex shrink-0 items-center">
           <span
@@ -1916,6 +1958,7 @@ function FormulaView({
       unit: string;
       ingredient_id: string;
       note?: string | null;
+      stage?: number;
       ingredients: { name: string; name_en: string | null };
     }[]
   >;
@@ -1948,6 +1991,14 @@ function FormulaView({
                     {line.ingredients.name_en
                       ? `${line.ingredients.name} (${line.ingredients.name_en})`
                       : line.ingredients.name}
+                    {(line.stage ?? 1) >= 2 && (
+                      <span
+                        className="label-caps ml-2 border border-foreground px-1 text-[10px]"
+                        title="나중 단계(2차)에 넣는 재료"
+                      >
+                        2차
+                      </span>
+                    )}
                     {line.note?.trim() && (
                       <span className="block text-xs text-muted-foreground">
                         💬 {line.note.trim()}
@@ -1993,6 +2044,8 @@ type EditDraftRow = {
   /** 저장된 값 — 개수 표기만 바뀌어도 저장 대상이 되게 비교용 */
   originalSecondaryAmount?: number | null;
   originalSecondaryUnit?: string | null;
+  /** 2차(나중에 넣는) 재료 표시 — 새 버전으로 저장할 때 그대로 옮긴다 */
+  stage?: number;
   removed: boolean;
 };
 
@@ -2089,6 +2142,7 @@ function EditFormulaVersionModal({
         secondaryUnit: row.secondary_unit,
         originalSecondaryAmount: row.secondary_amount,
         originalSecondaryUnit: row.secondary_unit,
+        stage: row.stage ?? 1,
         removed: false,
       })),
     );
@@ -2439,6 +2493,7 @@ function EditFormulaVersionModal({
           note: row.note,
           secondary_amount: row.secondaryAmount,
           secondary_unit: row.secondaryUnit,
+          stage: row.stage ?? 1,
           amount_source:
             row.originalAmount === null ||
             Number(row.amount) !== row.originalAmount ||
@@ -2574,6 +2629,7 @@ function EditFormulaVersionModal({
           note: row.note,
           secondary_amount: row.secondaryAmount,
           secondary_unit: row.secondaryUnit,
+          stage: row.stage ?? 1,
           amount_source:
             row.originalAmount === null ||
             Number(row.amount) !== row.originalAmount ||
@@ -3700,9 +3756,12 @@ export function DayWorkView({
   focusKey,
   part = "ALL",
   weighedIds,
+  stage2WeighedIds,
 }: {
   /** 계량이 끝나 다음 단계로 넘어간 선택(행) id — WEIGHING MATRIX에서 흐리게, 맨 뒤로 */
   weighedIds?: ReadonlySet<string>;
+  /** 2차 블록 타이머가 시작됐거나 끝난 선택(행) id — 두 단계 포뮬라의 계량 완료 판단용(#92) */
+  stage2WeighedIds?: ReadonlySet<string>;
   /** COMPONENTS: 컴포넌트 생산 리스트만 / WORK_VIEW: 계량 표(WORK VIEW)만 / ALL: 둘 다 */
   part?: "ALL" | "COMPONENTS" | "WORK_VIEW";
   renderRecords?: (selectionIds: string[]) => React.ReactNode;
@@ -4059,6 +4118,7 @@ export function DayWorkView({
               onColumnOrder={onColumnOrder}
               getBatchAction={getBatchAction}
               weighedIds={weighedIds}
+              stage2WeighedIds={stage2WeighedIds}
               onEditPlan={
                 onSelectColumn
                   ? (id) => setPlanId((previous) => (previous === id ? null : id))

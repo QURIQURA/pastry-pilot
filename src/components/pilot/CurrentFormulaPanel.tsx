@@ -103,7 +103,9 @@ export function CurrentFormulaPanel({
 
       const { data: baseIngredients, error: biError } = await supabase
         .from("formula_version_ingredients")
-        .select("ingredient_id, amount, unit, note, sort_order, secondary_amount, secondary_unit")
+        .select(
+          "ingredient_id, amount, unit, note, sort_order, secondary_amount, secondary_unit, stage",
+        )
         .eq("formula_version_id", baseVersionSummary.id);
       if (biError) throw biError;
 
@@ -153,6 +155,7 @@ export function CurrentFormulaPanel({
               // 다른 복제 경로($formulaId.tsx의 새 버전 만들기)와 동일하게 함께 복사한다.
               secondary_amount: row.secondary_amount,
               secondary_unit: row.secondary_unit,
+              stage: row.stage ?? 1,
               amount_source: "copied",
             })),
           );

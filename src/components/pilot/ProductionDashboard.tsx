@@ -551,8 +551,25 @@ export function ProductionDashboard() {
     updateTabs(reordered.map((groups) => groups.flat()));
     setWorkTab(target);
   };
+  // 2026-11-27 (#92) 두 단계 작업: 한 컴포넌트를 1차/2차 블록으로 나눴으면 기록에 단계를 붙이고,
+  // 2차 기록에는 1차가 끝난 뒤 기다린 시간(예: 가나슈 숙성)을 보여준다.
+  const stageInfo = (block: WorkBlock) => {
+    const siblings = blocksByRow.get(block.work_session_formula_version_id) ?? [];
+    if (siblings.length <= 1) return { label: undefined, waitFrom: undefined };
+    const index = siblings.findIndex((b) => b.id === block.id);
+    const previous = index > 0 ? siblings[index - 1] : undefined;
+    const previousTask = previous?.work_session_task_id
+      ? tasksById.get(previous.work_session_task_id)
+      : undefined;
+    return {
+      label: block.step_name ?? `${block.part_no}차`,
+      waitFrom: previousTask?.completed_at ?? undefined,
+    };
+  };
   const hasRunningRecord = productionRecords.some(
-    (record) => record.start && !record.end && !record.done,
+    (record) =>
+      (record.start && !record.end && !record.done) ||
+      (!record.start && !record.done && stageInfo(record.block).waitFrom),
   );
   useEffect(() => {
     if (!hasRunningRecord) return;
@@ -585,6 +602,18 @@ export function ProductionDashboard() {
         record.done || (task ? readTimers(task).some((timer) => timer.started_at) : false);
       return pastWeighing ? record.rows : [];
     }),
+  );
+  // 2026-11-27 (#92) 두 단계 포뮬라: 2차 재료가 있는 열은 2차 블록(2차 이후)의 타이머로만 계량 완료.
+  const recordPastWeighing = (record: (typeof productionRecords)[number]) => {
+    const task = record.block.work_session_task_id
+      ? tasksById.get(record.block.work_session_task_id)
+      : undefined;
+    return record.done || (task ? readTimers(task).some((timer) => timer.started_at) : false);
+  };
+  const stage2WeighedRowIds = new Set(
+    productionRecords.flatMap((record) =>
+      (record.block.part_no ?? 1) >= 2 && recordPastWeighing(record) ? record.rows : [],
+    ),
   );
   // The right-hand production record list is a day-wide timeline, not a view of
   // the currently selected 1차/2차 work tab. Tabs only scope the editing workspace.
@@ -1401,6 +1430,7 @@ export function ProductionDashboard() {
                 <DayWorkView
                   part="WORK_VIEW"
                   weighedIds={weighedRowIds}
+                  stage2WeighedIds={stage2WeighedRowIds}
                   key={`${date}-${activeTab}`}
                   items={activeItems}
                   batchBySelection={batchBySelection}
@@ -1525,6 +1555,8 @@ export function ProductionDashboard() {
                         title={blockTitle(record.block, record.row)}
                         active={recordRowId != null && record.rows.includes(recordRowId)}
                         mergedLabel={record.mergedLabel}
+                        stage={stageInfo(record.block)}
+                        now={clock}
                         onStarted={ensureSessionStarted}
                       />
                     ),
@@ -1579,6 +1611,8 @@ export function ProductionDashboard() {
                   title={blockTitle(block, row)}
                   active={recordRowId != null && rows.includes(recordRowId)}
                   mergedLabel={mergedLabel}
+                  stage={stageInfo(block)}
+                  now={clock}
                   onStarted={ensureSessionStarted}
                 />
               ))}
@@ -1596,6 +1630,8 @@ export function ProductionDashboard() {
                       title={blockTitle(block, row)}
                       active={recordRowId != null && rows.includes(recordRowId)}
                       mergedLabel={mergedLabel}
+                      stage={stageInfo(block)}
+                      now={clock}
                       onStarted={ensureSessionStarted}
                     />
                   ))}
@@ -1648,6 +1684,8 @@ function ProductionBlockRecord({
   active,
   onStarted,
   mergedLabel,
+  stage,
+  now,
 }: {
   block: WorkBlock;
   row: DashboardComponentRow;
@@ -1656,6 +1694,9 @@ function ProductionBlockRecord({
   onStarted: (sessionId: string, iso: string) => void | Promise<void>;
   /** 병합 컴포넌트의 한 벌 기록 — 이 기록이 함께 다루는 오더들 */
   mergedLabel?: string | undefined;
+  /** 1차/2차로 나눈 작업의 단계 표시와, 앞 단계가 끝난 시각(2차 대기 시간 계산용, #92) */
+  stage?: { label: string | undefined; waitFrom: string | undefined } | undefined;
+  now?: Date | undefined;
 }) {
   const tasks = useQuery(workSessionTasksQuery(row.work_session_id));
   const task = tasks.data?.find((item) => item.id === block.work_session_task_id);
@@ -1663,6 +1704,19 @@ function ProductionBlockRecord({
   useEffect(() => {
     if (active) setExpanded(true);
   }, [active]);
+  // 앞 단계가 끝난 뒤 이 단계를 시작하기까지 기다린 시간 — 시작 전이면 지금까지 기다린 시간.
+  const waitText = (() => {
+    if (!stage?.waitFrom) return null;
+    const from = new Date(stage.waitFrom).getTime();
+    const to = task?.actual_started_at
+      ? new Date(task.actual_started_at).getTime()
+      : (now ?? new Date()).getTime();
+    const minutes = Math.max(0, Math.round((to - from) / 60_000));
+    const span = `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
+    return task?.actual_started_at
+      ? `앞 단계 후 대기 ${span}`
+      : `앞 단계 ${formatTime(stage.waitFrom)} 끝 · 대기 ${span}`;
+  })();
   return (
     <div className="border-b border-border/50 last:border-0">
       <div className="flex items-center gap-2">
@@ -1680,6 +1734,14 @@ function ProductionBlockRecord({
           <span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
           <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
             {row.componentName} · {mergedLabel ?? row.order.order_number}
+            {stage?.label && (
+              <span className="label-caps ml-1 border border-border px-1 text-[10px]">
+                {stage.label}
+              </span>
+            )}
+            {waitText && (
+              <span className="mt-0.5 block text-[10px] text-muted-foreground">{waitText}</span>
+            )}
           </span>
           <span className="shrink-0 text-muted-foreground">
             {task?.actual_started_at
