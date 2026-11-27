@@ -24,6 +24,7 @@ import { fmtNumber, toGrams, versionLabel } from "@/lib/formula";
 import { ingredientDisplayName } from "@/lib/pilot";
 import { costPerGram, fmtCurrency } from "@/lib/cost";
 import { cn } from "@/lib/utils";
+import { alignIngredientOccurrences } from "@/lib/version-comparison-occurrences";
 
 const DEFAULT_COL_WIDTH = 140;
 const MIN_COL_WIDTH = 72;
@@ -43,7 +44,8 @@ interface CellFlags {
 }
 
 interface SheetRow {
-  id: string; // ingredient_id — 재료 단위 안정적인 키(드래그 재정렬/높이 조절용)
+  id: string; // ingredient_id + occurrence — 중복 재료 각각의 안정적인 화면 키
+  ingredientId: string; // INGREDIENT MASTER 링크는 실제 ingredient_id 유지
   name: string;
   firstSeenAt: number;
   sortOrder: number;
@@ -85,30 +87,26 @@ export function VersionComparisonSheet({
   // 전체 버전에 등장한 재료를 하나의 행 목록으로 합친다. 순서는 가장 먼저 등장한 버전에서의
   // sort_order를 기준으로 — 나중 버전에서만 추가된 재료는 그 뒤에 자연스럽게 붙는다.
   const baseRows = useMemo<SheetRow[]>(() => {
-    const byIngredient = new Map<string, SheetRow>();
-    baseVersions.forEach((v, vIdx) => {
-      const rows = versionIngredientQueries[vIdx]?.data ?? [];
-      rows.forEach((row) => {
-        const key = row.ingredient_id;
-        const existing = byIngredient.get(key);
-        if (existing) {
-          existing.byVersion.set(v.id, row);
-        } else {
-          byIngredient.set(key, {
-            id: key,
-            name: row.ingredients ? ingredientDisplayName(row.ingredients) : "—",
-            firstSeenAt: vIdx,
-            sortOrder: row.sort_order,
-            byVersion: new Map([[v.id, row]]),
-            flags: new Map(),
-            priceCost: null,
-          });
-        }
-      });
+    const occurrences = alignIngredientOccurrences(
+      baseVersions,
+      baseVersions.map((_, idx) => versionIngredientQueries[idx]?.data ?? []),
+    );
+    const sheetRows: SheetRow[] = occurrences.map((entry) => {
+      const sample = [...entry.byVersion.values()][0]!;
+      return {
+        id: entry.id,
+        ingredientId: entry.ingredientId,
+        name: sample.ingredients ? ingredientDisplayName(sample.ingredients) : "—",
+        firstSeenAt: entry.firstSeenAt,
+        sortOrder: entry.sortOrder,
+        byVersion: entry.byVersion,
+        flags: new Map(),
+        priceCost: null,
+      };
     });
     // NEW/변경됨/삭제됨 플래그를 버전의 실제 시간 순서로 한 번 계산해둔다.
     const currentVersion = baseVersions.find((v) => v.status === "CURRENT");
-    for (const sheetRow of byIngredient.values()) {
+    for (const sheetRow of sheetRows) {
       let prevCell: VersionIngredientRow | undefined;
       baseVersions.forEach((v, vIdx) => {
         const cell = sheetRow.byVersion.get(v.id);
@@ -133,7 +131,7 @@ export function VersionComparisonSheet({
         sheetRow.priceCost = grams != null && cpg != null ? grams * cpg : null;
       }
     }
-    return [...byIngredient.values()].sort(
+    return sheetRows.sort(
       (a, b) => a.firstSeenAt - b.firstSeenAt || a.sortOrder - b.sortOrder,
     );
   }, [baseVersions, versionIngredientQueries]);
@@ -146,13 +144,13 @@ export function VersionComparisonSheet({
   // 새 순서를 적용하되, 각 버전에 실제로 존재하는 재료만으로 그 버전 자신의 sort_order를
   // 다시 매긴다(0부터 연속). Formula 페이지의 reorderRows와 동일한 저장 규칙.
   const persistRowOrder = useMutation({
-    mutationFn: async (orderedIngredientIds: string[]) => {
+    mutationFn: async (orderedOccurrenceIds: string[]) => {
       const rowById = new Map(baseRows.map((r) => [r.id, r]));
       const updates: { id: string; index: number }[] = [];
       baseVersions.forEach((v) => {
         let index = 0;
-        for (const ingId of orderedIngredientIds) {
-          const cell = rowById.get(ingId)?.byVersion.get(v.id);
+        for (const occurrenceId of orderedOccurrenceIds) {
+          const cell = rowById.get(occurrenceId)?.byVersion.get(v.id);
           if (!cell) continue;
           if (cell.sort_order !== index) updates.push({ id: cell.id, index });
           index += 1;
@@ -491,7 +489,7 @@ function SheetBodyRow({
               원가 입력 워크플로우에는 오히려 이 바로가기가 필요하다는 사용자 판단) */}
           <Link
             to="/ingredients/$ingredientId"
-            params={{ ingredientId: row.id }}
+            params={{ ingredientId: row.ingredientId }}
             className="whitespace-nowrap text-right hover:underline"
             onClick={(e) => e.stopPropagation()}
           >
@@ -548,6 +546,11 @@ function SheetBodyRow({
                   <span className="label-caps ml-1 border border-foreground px-1 py-0.5 text-[9px]">
                     NEW
                   </span>
+                )}
+                {cell.note && (
+                  <div className="mt-1 whitespace-normal text-[11px] text-muted-foreground">
+                    {cell.note}
+                  </div>
                 )}
               </>
             ) : removed ? (
