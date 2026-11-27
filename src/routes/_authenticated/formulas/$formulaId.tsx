@@ -1,3 +1,5 @@
+import { FormulaNameFields } from "@/components/pilot/FormulaNameFields";
+import { readCanonicalFormulaName } from "@/lib/formula-name";
 import { BlendSourcesPanel } from "@/components/pilot/BlendSourcesPanel";
 import { BlendIngredientBreakdown } from "@/components/pilot/BlendIngredientBreakdown";
 import { readBlendSources } from "@/lib/component-blend";
@@ -628,6 +630,9 @@ function FormulaDetailPage() {
       // 이름 / component
       const formulaPatch: { name?: string; component_id?: string | null } = {};
       const trimmedName = draft.name.trim();
+      if (readCanonicalFormulaName(formula.data.name) && !trimmedName) {
+        throw new Error("Enter a valid flavour, texture, and product type before saving.");
+      }
       if (trimmedName && trimmedName !== formula.data.name) formulaPatch.name = trimmedName;
       if (draft.componentId !== (formula.data.component_id ?? ""))
         formulaPatch.component_id = draft.componentId || null;
@@ -908,12 +913,21 @@ function FormulaDetailPage() {
               ← {linkedComponent.name.toUpperCase()}
             </Link>
           )}
-          <input
-            className="w-full max-w-lg border border-transparent bg-transparent px-0 py-1 text-lg text-foreground outline-none hover:border-border focus:border-foreground disabled:cursor-not-allowed disabled:opacity-70"
-            value={editing ? (draft?.name ?? "") : formula.data.name}
-            disabled={fieldsDisabled}
-            onChange={(e) => setDraft((d) => (d ? { ...d, name: e.target.value } : d))}
-          />
+          {editing && readCanonicalFormulaName(formula.data.name) ? (
+            <FormulaNameFields
+              initialName={formula.data.name}
+              onName={(name) =>
+                setDraft((previous) => (previous ? { ...previous, name } : previous))
+              }
+            />
+          ) : (
+            <input
+              className="w-full max-w-lg border border-transparent bg-transparent px-0 py-1 text-lg text-foreground outline-none hover:border-border focus:border-foreground disabled:cursor-not-allowed disabled:opacity-70"
+              value={editing ? (draft?.name ?? "") : formula.data.name}
+              disabled={fieldsDisabled}
+              onChange={(e) => setDraft((d) => (d ? { ...d, name: e.target.value } : d))}
+            />
+          )}
           {technique && (
             <div className="flex flex-wrap items-center gap-2">
               <Link
