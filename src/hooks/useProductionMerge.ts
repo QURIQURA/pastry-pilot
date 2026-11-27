@@ -5,7 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { legacyBatchEntries, nextProductionMerge } from "@/lib/production-merge-state";
 
 const BATCH_EVENT = "pilot:production-batches";
-const DAY_PATTERN = /^\\d{4}-\\d{2}-\\d{2}$/;
+const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const legacyAttempts = new Set<string>();
 type MemberMap = Map<string, string>;
 const queryKey = (day: string) => ["production_merge_members", day] as const;
@@ -87,7 +87,6 @@ export function useProductionMerge(day: string) {
       .then(({ error }) => {
         if (error) {
           toast.error(`기존 병합 가져오기 실패: ${error.message}`);
-          legacyAttempts.delete(day);
         }
         void client.invalidateQueries({ queryKey: queryKey(day) });
       });
