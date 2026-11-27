@@ -448,11 +448,11 @@ Deno.serve(async (req: Request) => {
         kora.from("daily_tasks").select("planner_task_id,order_id").in("planner_task_id", ids),
         kora
           .from("work_session_formula_versions")
-          .select("planner_task_id,work_sessions(order_id)")
+          .select("planner_task_id,work_sessions(id,order_id)")
           .in("planner_task_id", ids),
         kora
           .from("work_blocks")
-          .select("planner_task_id,work_session_formula_versions(work_sessions(order_id))")
+          .select("planner_task_id,work_session_formula_versions(work_sessions(id,order_id))")
           .in("planner_task_id", ids),
       ]);
       if (daily.error || selections.error || blocks.error) {
@@ -463,7 +463,7 @@ Deno.serve(async (req: Request) => {
         if (taskId && owner !== order.id) protectedIds.add(taskId);
       };
       for (const row of daily.data ?? []) protect(row.planner_task_id, row.order_id);
-      type SessionReference = { order_id: string | null };
+      type SessionReference = { id: string; order_id: string | null };
       type SelectionReference = { work_sessions: SessionReference | null };
       const selectionReferences = selections.data as unknown as Array<
         SelectionReference & { planner_task_id: string | null }
@@ -472,11 +472,29 @@ Deno.serve(async (req: Request) => {
         planner_task_id: string | null;
         work_session_formula_versions: SelectionReference | null;
       }> | null;
+      const popupOwners = new Map<string, string | null>();
+      const ownerOf = async (session: SessionReference | null | undefined) => {
+        if (!session || session.order_id) return session?.order_id;
+        if (popupOwners.has(session.id)) return popupOwners.get(session.id);
+        const { data: orders, error } = await kora
+          .from("orders")
+          .select("id")
+          .eq("order_kind", "POPUP")
+          .contains("popup_plan", { items: [{ work_session_id: session.id }] })
+          .limit(2);
+        if (error) throw error;
+        const owner = orders?.length === 1 ? orders[0].id : null;
+        popupOwners.set(session.id, owner);
+        return owner;
+      };
       for (const row of selectionReferences ?? []) {
-        protect(row.planner_task_id, row.work_sessions?.order_id);
+        protect(row.planner_task_id, await ownerOf(row.work_sessions));
       }
       for (const row of blockReferences ?? []) {
-        protect(row.planner_task_id, row.work_session_formula_versions?.work_sessions?.order_id);
+        protect(
+          row.planner_task_id,
+          await ownerOf(row.work_session_formula_versions?.work_sessions),
+        );
       }
       const scopedIds = ids.filter((id) => !protectedIds.has(id));
       if (!scopedIds.length) return 0;
@@ -845,13 +863,18 @@ Deno.serve(async (req: Request) => {
       // 2026-11-06: 팝업 품목에 연결된 세션이면 그 팝업의 WANN 프로젝트 아래로 넣는다(CONFIRMED 때 생성된 프로젝트).
       const { data: popup, error: popupError } = await kora
         .from("orders")
-        .select("wann_project_id")
+        .select(orderFields)
+        .eq("user_id", KORA_OWNER_ID)
         .eq("order_kind", "POPUP")
         .contains("popup_plan", { items: [{ work_session_id: sessionId }] })
         .not("wann_project_id", "is", null)
         .limit(1)
         .maybeSingle();
       if (popupError) throw popupError;
+      if (popup?.status === "COMPLETED") {
+        const closedTasks = await closeOrderProject(popup);
+        return json({ synced: false, reason: "popup completed", closed_tasks: closedTasks });
+      }
       orderProjectId = popup?.wann_project_id ?? null;
     }
 
