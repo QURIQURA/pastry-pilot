@@ -38,9 +38,10 @@ function parseMembers(value: unknown): MemberMap {
 export function useProductionMerge(day: string) {
   const client = useQueryClient();
   const isScheduledDay = DAY_PATTERN.test(day);
-  const [legacyState, setLegacyState] = useState<{ day: string; members: MemberMap }>(
-    () => ({ day, members: readLegacy(day) }),
-  );
+  const [legacyState, setLegacyState] = useState<{ day: string; members: MemberMap }>(() => ({
+    day,
+    members: readLegacy(day),
+  }));
   useEffect(() => {
     setLegacyState({ day, members: readLegacy(day) });
   }, [day]);
@@ -57,9 +58,10 @@ export function useProductionMerge(day: string) {
         .eq("work_date", day);
       if (error) throw error;
       return new Map(
-        ((data ?? []) as { selection_id: string; batch_id: string }[]).map(
-          (row) => [row.selection_id, row.batch_id],
-        ),
+        ((data ?? []) as { selection_id: string; batch_id: string }[]).map((row) => [
+          row.selection_id,
+          row.batch_id,
+        ]),
       );
     },
   });
@@ -80,10 +82,13 @@ export function useProductionMerge(day: string) {
     if (!eligible.length) return;
     legacyAttempts.add(day);
     void supabase
-      .rpc("production_merge_import_legacy" as never, {
-        p_work_date: day,
-        p_entries: eligible,
-      } as never)
+      .rpc(
+        "production_merge_import_legacy" as never,
+        {
+          p_work_date: day,
+          p_entries: eligible,
+        } as never,
+      )
       .then(({ error }) => {
         if (error) {
           toast.error(`기존 병합 가져오기 실패: ${error.message}`);
@@ -124,10 +129,13 @@ export function useProductionMerge(day: string) {
     client.setQueryData(queryKey(day), next);
     setLegacyState({ day, members: next });
     void supabase
-      .rpc("production_merge_change" as never, {
-        p_work_date: day,
-        p_selection_ids: ids,
-      } as never)
+      .rpc(
+        "production_merge_change" as never,
+        {
+          p_work_date: day,
+          p_selection_ids: ids,
+        } as never,
+      )
       .then(({ data, error }) => {
         if (error) {
           toast.error(`병합 저장 실패: ${error.message}`);
