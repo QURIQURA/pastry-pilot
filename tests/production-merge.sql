@@ -12,6 +12,9 @@ values
  ('30000000-0000-0000-0000-000000000002','53e168e4-72aa-418e-812a-6caaf315a205','20000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000001',0.666666667),
  ('30000000-0000-0000-0000-000000000003','53e168e4-72aa-418e-812a-6caaf315a205','20000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000001',1),
  ('30000000-0000-0000-0000-000000000004','53e168e4-72aa-418e-812a-6caaf315a205','20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000002',1);
+-- CI stub tables omit the production grants even though live PILOT grants SELECT
+-- to authenticated. Mirror that specific privilege inside this rollback-only test.
+grant select on public.work_session_formula_versions to authenticated;
 set local role authenticated;
 set local request.jwt.claim.sub = '53e168e4-72aa-418e-812a-6caaf315a205';
 select public.production_merge_change('2026-11-27', array[
