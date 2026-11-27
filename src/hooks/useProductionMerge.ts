@@ -69,8 +69,9 @@ export function useProductionMerge(day: string) {
   const local = legacyState.day === day ? legacyState.members : readLegacy(day);
   const batchBySelection = useMemo(() => {
     if (!isScheduledDay || !query.isSuccess) return local;
-    // Retain the old view until the initial import has been confirmed by Supabase.
-    return query.data.size === 0 && local.size > 0 ? local : query.data;
+    // Once fetched, the database is authoritative, including an intentionally
+    // empty batch after unmerge. Old localStorage must never resurrect it.
+    return query.data;
   }, [day, isScheduledDay, local, query.data, query.isSuccess]);
 
   useEffect(() => {
