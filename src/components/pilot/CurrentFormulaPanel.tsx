@@ -312,7 +312,7 @@ export function CurrentFormulaPanel({
             않아도 이 Component의 모든 버전이 뭐가 다른지 한눈에 볼 수 있게. 실제 편집은 항상
             "OPEN FULL FORMULA"에서 버전을 선택해서 한다 (읽기 전용). */}
         {(formula.formula_versions ?? []).length > 0 && (
-          <VersionComparisonSheet versions={formula.formula_versions} />
+          <VersionComparisonSheet formulaId={formula.id} versions={formula.formula_versions} />
         )}
       </div>
     </SectionCard>

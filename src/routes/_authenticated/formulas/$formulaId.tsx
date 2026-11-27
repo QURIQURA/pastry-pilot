@@ -1,3 +1,4 @@
+import { FormulaVersionResearch } from "@/components/pilot/FormulaVersionResearch";
 import { FormulaNameFields } from "@/components/pilot/FormulaNameFields";
 import { readCanonicalFormulaName } from "@/lib/formula-name";
 import { BlendSourcesPanel } from "@/components/pilot/BlendSourcesPanel";
@@ -180,7 +181,11 @@ function FormulaDetailPage() {
   const ingredientGroups = useQuery(ingredientGroupsQuery());
 
   const versionList = useMemo(() => versions.data ?? [], [versions.data]);
-  const [versionId, setVersionId] = useState<string | null>(requestedVersion ?? null);
+  const version =
+    versionList.find((candidate) => candidate.id === requestedVersion) ?? versionList.at(-1) ?? null;
+  const versionId = version?.id ?? null;
+  const selectVersion = (id: string) =>
+    navigate({ to: "/formulas/$formulaId", params: { formulaId }, search: { version: id } });
   const [batch, setBatch] = useState("1");
   const [basisId, setBasisId] = useState(""); // baker's % 기준 재료
   // 합성 컴포넌트: 재료를 원본별로 분리해서(기본) 볼지, 합산 표(편집용)로 볼지
@@ -210,20 +215,6 @@ function FormulaDetailPage() {
   const editing = Boolean(draft);
   const initializedVersionRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    setVersionId(requestedVersion ?? null);
-  }, [formulaId, requestedVersion]);
-
-  useEffect(() => {
-    if (versionList.length === 0) return;
-    if (versionId && versionList.some((v) => v.id === versionId)) return;
-    const current = versionList.reduce((best, v) =>
-      v.version_number > best.version_number ? v : best,
-    );
-    setVersionId(current?.id ?? null);
-  }, [versionList, versionId]);
-
-  const version = versionList.find((v) => v.id === versionId) ?? null;
   const ingredients = useQuery(versionIngredientsQuery(versionId));
   const rows = ingredients.data ?? [];
   const batchPresetsQuery = useQuery(formulaVersionBatchesQuery(versionId));
@@ -788,7 +779,7 @@ function FormulaDetailPage() {
   useEffect(() => () => flushAutosave(), [versionId, flushAutosave]);
 
   const createVersion = useMutation({
-    mutationFn: async ({ summary, reason }: { summary: string; reason: string }) => {
+    mutationFn: async ({ summary, reason, title, target }: NewVersionResearch) => {
       const user_id = await currentUserId();
       const nextNumber = versionList.reduce((max, v) => Math.max(max, v.version_number), 0) + 1;
       const { data, error } = await supabase
@@ -808,6 +799,8 @@ function FormulaDetailPage() {
           notes: version?.notes ?? null,
           change_summary: summary || null,
           change_reason: reason || null,
+          version_title: title || null,
+          target_improvement: target || null,
           bath_water_g: version?.bath_water_g ?? null,
           basis_overrides: version?.basis_overrides ?? {},
         })
@@ -837,7 +830,7 @@ function FormulaDetailPage() {
     onSuccess: async (id) => {
       await invalidate();
       setCreatingVersion(false);
-      setVersionId(id ?? null);
+      if (id) await selectVersion(id);
     },
   });
 
@@ -1013,7 +1006,7 @@ function FormulaDetailPage() {
           <select
             className={`${compactSelectClass} w-auto`}
             value={versionId ?? ""}
-            onChange={(e) => setVersionId(e.target.value)}
+            onChange={(e) => void selectVersion(e.target.value)}
           >
             {versionList.map((v) => (
               <option key={v.id} value={v.id}>
@@ -1114,12 +1107,14 @@ function FormulaDetailPage() {
                 disabled: isDirty || saveAll.isPending,
                 onCreated: async (id) => {
                   await invalidate();
-                  setVersionId(id);
+                  await selectVersion(id);
                 },
               }
             : undefined
         }
       />
+
+      {version && <FormulaVersionResearch key={version.id} version={version} versions={versionList} />}
 
       {/* INGREDIENTS — BASE ×1 vs 저장된 배수 프리셋을 한 표 안에서 박스로 구분해 보여준다 */}
       {reorderError && (
@@ -1396,11 +1391,7 @@ function FormulaDetailPage() {
       </SectionCard>
 
       {/* HISTORY */}
-      <VersionHistory
-        formulaId={formulaId}
-        versions={versionList}
-        onOpen={(id) => setVersionId(id)}
-      />
+      <VersionHistory formulaId={formulaId} versions={versionList} />
 
       <button
         type="button"
@@ -1684,8 +1675,9 @@ function FormulaDetailPage() {
         <NewVersionModal
           fromLabel={version ? versionLabel(version.version_number) : "—"}
           pending={createVersion.isPending}
-          onCancel={() => setCreatingVersion(false)}
-          onCreate={(summary, reason) => createVersion.mutate({ summary, reason })}
+          failed={createVersion.isError}
+          onCancel={() => { createVersion.reset(); setCreatingVersion(false); }}
+          onCreate={(research) => createVersion.mutate(research)}
         />
       )}
     </div>
@@ -2135,31 +2127,26 @@ function UnifiedIngredientRow({
 function VersionHistory({
   formulaId,
   versions,
-  onOpen,
 }: {
   formulaId: string;
   versions: FormulaVersion[];
-  onOpen: (id: string) => void;
 }) {
-  const queryClient = useQueryClient();
-
   return (
-    <SectionCard title="SNAPSHOT HISTORY">
-      <p className="mb-3 font-mono text-[11px] text-muted-foreground">
-        Development Entry가 만든 배합 스냅샷들입니다 — 지워지지 않습니다. 항상 번호가 가장 높은
-        버전이 적용됩니다.
-      </p>
+    <SectionCard title="VERSION HISTORY">
       <ul className="divide-y divide-border border border-border">
         {versions.map((version) => (
           <li key={version.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
-            <button
-              type="button"
-              className="label-caps min-w-[3rem] text-left hover:underline"
-              onClick={() => onOpen(version.id)}
+            <Link
+              to="/formulas/$formulaId"
+              params={{ formulaId }}
+              search={{ version: version.id }}
+              hash="research-history"
+              className="label-caps min-w-[3rem] text-left underline"
             >
               {versionLabel(version.version_number)}
-            </button>
-            <span className="flex-1 text-sm">{version.change_summary || "—"}</span>
+            </Link>
+            <span className="flex-1 text-sm">{version.version_title || version.change_summary || "—"}</span>
+            <StatusBadge status={version.status} />
             <span className="font-mono text-xs text-muted-foreground">
               {formatDateTime(version.created_at)}
             </span>
@@ -2174,26 +2161,37 @@ function VersionHistory({
           <p className="label-caps mb-2 text-[11px] text-muted-foreground">
             VERSION COMPARISON SHEET
           </p>
-          <VersionComparisonSheet versions={versions} />
+          <VersionComparisonSheet formulaId={formulaId} versions={versions} />
         </div>
       )}
     </SectionCard>
   );
 }
 
+type NewVersionResearch = {
+  summary: string;
+  reason: string;
+  title: string;
+  target: string;
+};
+
 function NewVersionModal({
   fromLabel,
   pending,
+  failed,
   onCancel,
   onCreate,
 }: {
   fromLabel: string;
   pending: boolean;
+  failed: boolean;
   onCancel: () => void;
-  onCreate: (summary: string, reason: string) => void;
+  onCreate: (research: NewVersionResearch) => void;
 }) {
   const [summary, setSummary] = useState("");
   const [reason, setReason] = useState("");
+  const [title, setTitle] = useState("");
+  const [target, setTarget] = useState("");
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-foreground/20 sm:items-center sm:p-3">
       <div className="w-full max-w-md border border-border bg-background">
@@ -2207,12 +2205,15 @@ function NewVersionModal({
           className="space-y-3 p-3"
           onSubmit={(e) => {
             e.preventDefault();
-            onCreate(summary.trim(), reason.trim());
+            onCreate({ summary: summary.trim(), reason: reason.trim(), title: title.trim(), target: target.trim() });
           }}
         >
           <p className="font-mono text-xs uppercase text-muted-foreground">
             COPIES CURRENT INGREDIENT TABLE INTO A NEW DRAFT
           </p>
+          <Field label="VERSION TITLE">
+            <input className={inputClass} value={title} onChange={(e) => setTitle(e.target.value)} />
+          </Field>
           <Field label="CHANGE SUMMARY">
             <input
               className={inputClass}
@@ -2231,8 +2232,12 @@ function NewVersionModal({
               onChange={(e) => setReason(e.target.value)}
             />
           </Field>
+          <Field label="TARGET IMPROVEMENT">
+            <textarea className={inputClass} rows={2} value={target} onChange={(e) => setTarget(e.target.value)} />
+          </Field>
+          {failed && <p role="alert" className="text-sm text-destructive">Could not create the draft. Refresh the version list before retrying.</p>}
           <div className="flex gap-2">
-            <button type="submit" className={primaryButtonClass} disabled={pending}>
+            <button type="submit" className={primaryButtonClass} disabled={pending || !summary.trim()}>
               CREATE DRAFT
             </button>
             <button type="button" className={buttonClass} onClick={onCancel}>

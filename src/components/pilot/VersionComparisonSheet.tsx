@@ -69,7 +69,9 @@ interface SheetRow {
  */
 export function VersionComparisonSheet({
   versions,
+  formulaId,
 }: {
+  formulaId: string;
   versions: { id: string; version_number: number; status: string }[];
 }) {
   // 버전 순서(오래된 → 최신)로 정렬 — 데이터 자체의 기본 순서. 사용자가 드래그하면
@@ -362,6 +364,7 @@ export function VersionComparisonSheet({
                     <SheetColumnHeader
                       key={v.id}
                       id={v.id}
+                      formulaId={formulaId}
                       label={versionLabel(v.version_number)}
                       onResizeStart={(clientX) => startColumnResize(v.id, clientX)}
                     />
@@ -398,10 +401,12 @@ export function VersionComparisonSheet({
 
 function SheetColumnHeader({
   id,
+  formulaId,
   label,
   onResizeStart,
 }: {
   id: string;
+  formulaId: string;
   label: string;
   onResizeStart: (clientX: number) => void;
 }) {
@@ -427,7 +432,15 @@ function SheetColumnHeader({
         >
           <GripVertical className="h-3 w-3" />
         </button>
-        <span className="whitespace-nowrap">{label}</span>
+        <Link
+          to="/formulas/$formulaId"
+          params={{ formulaId }}
+          search={{ version: id }}
+          hash="research-history"
+          className="whitespace-nowrap text-foreground underline underline-offset-2"
+        >
+          {label}
+        </Link>
       </div>
       {/* 열 너비 조절 손잡이 — 오른쪽 경계를 드래그 */}
       <div
