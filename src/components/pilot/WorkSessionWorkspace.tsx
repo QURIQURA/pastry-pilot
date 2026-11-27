@@ -1117,7 +1117,7 @@ function WeighingView({
 
   useEffect(() => {
     setRowOrder((prev) => {
-      const ids = groups.map((g) => g.ingredientId);
+      const ids = groups.map((g) => g.rowKey);
       const kept = prev.filter((id) => ids.includes(id));
       const added = ids.filter((id) => !kept.includes(id));
       return [...kept, ...added];
@@ -1165,7 +1165,7 @@ function WeighingView({
   }, [columns, columnOrder, weighedColumnIds]);
 
   const displayGroups = useMemo(() => {
-    const byId = new Map(groups.map((g) => [g.ingredientId, g]));
+    const byId = new Map(groups.map((g) => [g.rowKey, g]));
     return rowOrder
       .map((id) => byId.get(id))
       .filter((g): g is (typeof groups)[number] => Boolean(g));
@@ -1474,14 +1474,14 @@ function WeighingView({
             <tbody>
               {displayGroups.map((group) => (
                 <MatrixBodyRow
-                  key={group.ingredientId}
+                  key={group.rowKey}
                   group={group}
                   columns={displayColumns}
                   weighedColumnIds={weighedColumnIds}
                   gramsByColumn={gramsByColumn}
-                  height={rowHeights[group.ingredientId] ?? DEFAULT_MATRIX_ROW_HEIGHT}
+                  height={rowHeights[group.rowKey] ?? DEFAULT_MATRIX_ROW_HEIGHT}
                   sessionId={sessionId}
-                  onResizeStart={(clientY) => startRowResize(group.ingredientId, clientY)}
+                  onResizeStart={(clientY) => startRowResize(group.rowKey, clientY)}
                   onProgressChanged={onProgressChanged}
                 />
               ))}
@@ -1692,7 +1692,7 @@ function MatrixBodyRow({
   onProgressChanged: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: group.ingredientId,
+    id: group.rowKey,
   });
 
   return (
