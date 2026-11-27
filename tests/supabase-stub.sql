@@ -47,6 +47,20 @@ create table if not exists public.formula_versions (
   user_id uuid not null,
   default_mould_id uuid
 );
+-- Existing ingredient lines; 20261127140000_formula_ingredient_stage adds `stage` (#92).
+create table if not exists public.formula_version_ingredients (
+  id uuid primary key,
+  user_id uuid not null,
+  formula_version_id uuid not null,
+  ingredient_id uuid not null,
+  amount numeric not null default 0,
+  unit text not null default 'g',
+  sort_order integer not null default 0,
+  note text,
+  secondary_amount numeric,
+  secondary_unit text,
+  amount_source text not null default 'manual'
+);
 create table if not exists public.moulds (
   id uuid primary key,
   user_id uuid not null,
