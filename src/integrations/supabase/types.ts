@@ -623,12 +623,14 @@ export type Database = {
           note: string | null
           order_id: string | null
           planner_task_id: string | null
+          prerequisite_for: string[]
           start_time: string
           task_date: string
           task_type: string | null
           template_id: string | null
           updated_at: string
           user_id: string
+          work_stage: number
         }
         Insert: {
           created_at?: string
@@ -638,12 +640,14 @@ export type Database = {
           note?: string | null
           order_id?: string | null
           planner_task_id?: string | null
+          prerequisite_for?: string[]
           start_time: string
           task_date: string
           task_type?: string | null
           template_id?: string | null
           updated_at?: string
           user_id?: string
+          work_stage?: number
         }
         Update: {
           created_at?: string
@@ -653,12 +657,14 @@ export type Database = {
           note?: string | null
           order_id?: string | null
           planner_task_id?: string | null
+          prerequisite_for?: string[]
           start_time?: string
           task_date?: string
           task_type?: string | null
           template_id?: string | null
           updated_at?: string
           user_id?: string
+          work_stage?: number
         }
         Relationships: [
           {
