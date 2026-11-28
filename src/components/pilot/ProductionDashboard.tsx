@@ -212,6 +212,8 @@ export function ProductionDashboard() {
   const [selectedDailyId, setSelectedDailyId] = useState<string | null>(null);
   const [dailyName, setDailyName] = useState("");
   const [dailySave, setDailySave] = useState(false);
+  // 2026-11-28 (#98) Quick Add 단계 — 비우면 지금 보고 있는 작업 탭(1차/2차…)을 따른다.
+  const [dailyStage, setDailyStage] = useState("");
   const gridRef = useRef<HTMLDivElement>(null);
 
   const rows = useMemo(() => components.data ?? [], [components.data]);
@@ -420,7 +422,9 @@ export function ProductionDashboard() {
   const tabItems = keepProductionBatchesTogether(
     storedTabs.map((ids, index) => [
       ...ids.filter((id) => itemsById.has(id)),
-      ...(index === 0 ? dayWorkItems.filter((item) => !assigned.has(item.rowId)).map((item) => item.rowId) : []),
+      ...(index === 0
+        ? dayWorkItems.filter((item) => !assigned.has(item.rowId)).map((item) => item.rowId)
+        : []),
     ]),
     batchBySelection,
   ).map((ids) => ids.map((id) => itemsById.get(id)!));
@@ -516,24 +520,57 @@ export function ProductionDashboard() {
     const tabs = record.rows.flatMap((id) => tabByRow.get(id) ?? []);
     return tabs.length ? Math.min(...tabs) : 0;
   };
-  // Daily tasks sit before the first open record planned after them, or before a chosen work item.
-  const dailyPosition = (task: DailyTask) => {
+  // 2026-11-28 (#98) 데일리 작업의 작업 단계(0 = 1차). 탭 수보다 크면 마지막 탭에 둔다.
+  const dailyLane = (task: DailyTask) =>
+    Math.min(Math.max(0, (task.work_stage ?? 1) - 1), Math.max(0, workGroups.length - 1));
+  const dailyById = new Map(dayDailies.map((task) => [task.id, task] as const));
+  // Daily tasks sit right before the earliest work they are a prerequisite (선행) for; otherwise
+  // before a chosen work item, or before the first open record of their stage (or later) planned
+  // after them.
+  const dailyPosition = (task: DailyTask, seen: Set<string> = new Set()): number => {
     const start = toMin(task.start_time);
     const tie = start / 10_000;
+    seen.add(task.id);
+    const targets = (task.prerequisite_for ?? []).flatMap((id) => {
+      const position = workPosition.get(id);
+      if (position != null) return [position - 0.5];
+      const other = dailyById.get(id);
+      return other && !seen.has(id) ? [dailyPosition(other, seen) - 0.05] : [];
+    });
+    if (targets.length) return Math.min(...targets) - 0.02 + tie / 100;
     const placed = dailyPlacement[task.id];
     if (placed && placed !== "time") {
       if (placed === "end") return 1e9 + 1;
       const position = workPosition.get(placed);
       if (position != null) return position - 0.5 + tie / 10;
     }
+    const lane = dailyLane(task);
     const next = productionRecords.find(
       (record) =>
         !record.done &&
+        recordLane(record) >= lane &&
         record.block.block_date === task.task_date &&
         toMin(record.block.start_time) > start,
     );
     return next ? recordPosition(next) - 0.5 + tie / 10 : 1e9 + tie;
   };
+  // 선행 대상(컴포넌트 행 id) → 그 앞에 꼭 끝내야 하는 데일리 작업들.
+  const prerequisitesByRow = new Map<string, DailyTask[]>();
+  for (const task of dayDailies)
+    for (const id of task.prerequisite_for ?? []) {
+      const group = workGroups.flat().find((members) => members.includes(id)) ?? [id];
+      for (const member of group)
+        prerequisitesByRow.set(member, [...(prerequisitesByRow.get(member) ?? []), task]);
+    }
+  const prerequisitesFor = (rows: string[], block?: WorkBlock) =>
+    [...new Set(rows.flatMap((id) => prerequisitesByRow.get(id) ?? []))].map((task) => ({
+      name: task.name,
+      // 선행 작업이 이 작업 시작 시각보다 늦게 끝나도록 잡혀 있으면 경고.
+      late:
+        !!block &&
+        block.block_date === task.task_date &&
+        toMin(task.end_time) > toMin(block.start_time),
+    }));
   const timelineLanes = workGroups.flatMap((groups, tab) =>
     groups.length > 0 || productionRecords.some((record) => recordLane(record) === tab)
       ? [tab]
@@ -898,6 +935,7 @@ export function ProductionDashboard() {
       day: string;
       template?: DailyTaskTemplate;
       saveToLibrary?: boolean;
+      workStage?: number;
     }) => {
       const user_id = await currentUserId();
       let templateId = v.template?.id ?? null;
@@ -927,6 +965,7 @@ export function ProductionDashboard() {
           task_type: v.template?.task_type ?? null,
           note: v.template?.note ?? null,
           template_id: templateId,
+          work_stage: v.workStage ?? 1,
         })
         .select("id")
         .single();
@@ -952,6 +991,8 @@ export function ProductionDashboard() {
       name?: string;
       note?: string | null;
       orderId?: string | null;
+      workStage?: number;
+      prerequisiteFor?: string[];
     }) => {
       const { error } = await supabase
         .from("daily_tasks")
@@ -962,6 +1003,8 @@ export function ProductionDashboard() {
           name: v.name ?? v.task.name,
           note: v.note !== undefined ? v.note : v.task.note,
           order_id: v.orderId !== undefined ? v.orderId : v.task.order_id,
+          work_stage: v.workStage ?? v.task.work_stage,
+          prerequisite_for: v.prerequisiteFor ?? v.task.prerequisite_for,
           updated_at: new Date().toISOString(),
         })
         .eq("id", v.task.id);
@@ -1084,6 +1127,7 @@ export function ProductionDashboard() {
       day: date,
       ...(template ? { template } : {}),
       saveToLibrary: dailySave,
+      workStage: dailyStage ? Number(dailyStage) : activeTab + 1,
     });
   };
 
@@ -1237,7 +1281,9 @@ export function ProductionDashboard() {
                     <div
                       key={segment.start}
                       className="min-w-0 shrink-0 space-y-1"
-                      style={{ flexBasis: `${(duration / availableSegments.reduce((total, item) => total + Math.max(0, toMin(item.end) - toMin(item.start)), 0)) * 100}%` }}
+                      style={{
+                        flexBasis: `${(duration / availableSegments.reduce((total, item) => total + Math.max(0, toMin(item.end) - toMin(item.start)), 0)) * 100}%`,
+                      }}
                     >
                       <div className="flex justify-between font-mono text-[11px]">
                         <span>{segment.start}</span>
@@ -1248,12 +1294,21 @@ export function ProductionDashboard() {
                           key={tab}
                           className={cn(
                             "relative h-7 border-r border-background",
-                            "state" in segment && segment.state === "available" ? "bg-[#A9B79B]/30" :
-                            "state" in segment && segment.state === "busy" ? "bg-[#BDBDB8]/60" :
-                            "state" in segment && segment.state === "check" ? "bg-[#E8DFA8]/50" :
-                            "state" in segment && segment.state === "unknown" ? "bg-muted" : "bg-muted",
+                            "state" in segment && segment.state === "available"
+                              ? "bg-[#A9B79B]/30"
+                              : "state" in segment && segment.state === "busy"
+                                ? "bg-[#BDBDB8]/60"
+                                : "state" in segment && segment.state === "check"
+                                  ? "bg-[#E8DFA8]/50"
+                                  : "state" in segment && segment.state === "unknown"
+                                    ? "bg-muted"
+                                    : "bg-muted",
                           )}
-                          title={"state" in segment ? `${segment.start}–${segment.end} · ${segment.state}` : undefined}
+                          title={
+                            "state" in segment
+                              ? `${segment.start}–${segment.end} · ${segment.state}`
+                              : undefined
+                          }
                         >
                           {productionRecords.flatMap((record) => {
                             if (!record.start || recordLane(record) !== tab) return [];
@@ -1324,81 +1379,118 @@ export function ProductionDashboard() {
                 </button>
               ))}
             <div className="mt-2 space-y-1">
-              {workGroups.map((groups, tab) =>
-                groups.length === 0 ? null : (
+              {workGroups.map((groups, tab) => {
+                const laneDailies = dayDailies.filter((task) => dailyLane(task) === tab);
+                return groups.length === 0 && laneDailies.length === 0 ? null : (
                   <div key={tab} className="flex flex-wrap items-center gap-1">
                     <span className="label-caps w-12 shrink-0 text-[11px] text-muted-foreground">
                       {tab + 1}차
                     </span>
-                    {groups.map((members, index) => {
-                      const rowId = members[0]!;
-                      const row = rowById.get(rowId);
-                      const codes = [
-                        ...new Set(
-                          members.map((id) => rowById.get(id)?.order.order_number).filter(Boolean),
-                        ),
-                      ].join(" + ");
-                      const open = workMenuId === rowId;
-                      return (
-                        <div key={rowId} className="relative">
-                          <button
-                            type="button"
-                            className={cn(buttonClass, open && "bg-secondary")}
-                            aria-expanded={open}
-                            onClick={() => {
-                              setWorkMenuId(open ? null : rowId);
-                              focusRecord(rowId);
-                            }}
+                    {[
+                      ...laneDailies.map((task) => ({
+                        position: dailyPosition(task),
+                        node: (
+                          <span
+                            key={task.id}
+                            className="border border-border bg-background px-2 py-1 text-xs"
+                            style={{ borderLeft: `3px solid ${DAILY_COLOR.accent}` }}
+                            title={`${task.start_time.slice(0, 5)}–${task.end_time.slice(0, 5)}`}
                           >
-                            {index + 1} · {row?.componentName}{" "}
-                            <span className="text-muted-foreground">{codes}</span> ▾
-                          </button>
-                          {open && (
-                            <div
-                              className="absolute left-0 z-30 mt-1 w-44 space-y-2 border border-border bg-card p-2 shadow-md"
-                              onKeyDown={(event) => {
-                                if (event.key === "Escape") setWorkMenuId(null);
-                              }}
-                            >
-                              <label className="block space-y-1 text-xs">
-                                작업 탭
-                                <select
-                                  className="block w-full border border-border bg-background p-1"
-                                  value={tab}
-                                  onChange={(event) => moveWork(rowId, Number(event.target.value))}
-                                >
-                                  {workGroups.map((_, target) => (
-                                    <option key={target} value={target}>
-                                      {target + 1}차 작업
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
-                              <label className="block space-y-1 text-xs">
-                                탭 안 작업 순서
-                                <select
-                                  className="block w-full border border-border bg-background p-1"
-                                  value={groups.indexOf(members)}
-                                  onChange={(event) => {
-                                    moveWork(rowId, tab, Number(event.target.value));
-                                    setWorkMenuId(null);
+                            <span className="label-caps mr-1 text-[9px] text-muted-foreground">
+                              {(task.prerequisite_for ?? []).length ? "선행" : "DAILY"}
+                            </span>
+                            {task.name}
+                          </span>
+                        ),
+                      })),
+                      ...groups.map((members, index) => {
+                        const rowId = members[0]!;
+                        const row = rowById.get(rowId);
+                        const codes = [
+                          ...new Set(
+                            members
+                              .map((id) => rowById.get(id)?.order.order_number)
+                              .filter(Boolean),
+                          ),
+                        ].join(" + ");
+                        const open = workMenuId === rowId;
+                        return {
+                          position: workPosition.get(rowId) ?? index,
+                          node: (
+                            <div key={rowId} className="relative">
+                              <button
+                                type="button"
+                                className={cn(buttonClass, open && "bg-secondary")}
+                                aria-expanded={open}
+                                onClick={() => {
+                                  setWorkMenuId(open ? null : rowId);
+                                  focusRecord(rowId);
+                                }}
+                              >
+                                {index + 1} · {row?.componentName}{" "}
+                                <span className="text-muted-foreground">{codes}</span>
+                                {prerequisitesFor(members).length > 0 && (
+                                  <span className="ml-1 text-[10px] text-muted-foreground">
+                                    ← 선행{" "}
+                                    {prerequisitesFor(members)
+                                      .map((p) => p.name)
+                                      .join(", ")}
+                                  </span>
+                                )}{" "}
+                                ▾
+                              </button>
+                              {open && (
+                                <div
+                                  className="absolute left-0 z-30 mt-1 w-44 space-y-2 border border-border bg-card p-2 shadow-md"
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Escape") setWorkMenuId(null);
                                   }}
                                 >
-                                  {groups.map((_, position) => (
-                                    <option key={position} value={position}>
-                                      {position + 1}번째
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
+                                  <label className="block space-y-1 text-xs">
+                                    작업 탭
+                                    <select
+                                      className="block w-full border border-border bg-background p-1"
+                                      value={tab}
+                                      onChange={(event) =>
+                                        moveWork(rowId, Number(event.target.value))
+                                      }
+                                    >
+                                      {workGroups.map((_, target) => (
+                                        <option key={target} value={target}>
+                                          {target + 1}차 작업
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  <label className="block space-y-1 text-xs">
+                                    탭 안 작업 순서
+                                    <select
+                                      className="block w-full border border-border bg-background p-1"
+                                      value={groups.indexOf(members)}
+                                      onChange={(event) => {
+                                        moveWork(rowId, tab, Number(event.target.value));
+                                        setWorkMenuId(null);
+                                      }}
+                                    >
+                                      {groups.map((_, position) => (
+                                        <option key={position} value={position}>
+                                          {position + 1}번째
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                </div>
+                              )}
                             </div>
-                          )}
-                        </div>
-                      );
-                    })}
+                          ),
+                        };
+                      }),
+                    ]
+                      .sort((a, b) => a.position - b.position)
+                      .map((entry) => entry.node)}
                   </div>
-                ),
-              )}
+                );
+              })}
             </div>
           </div>
         )}
@@ -1498,6 +1590,19 @@ export function ProductionDashboard() {
                     value={dailyMinutes}
                     onChange={(e) => setDailyMinutes(e.target.value)}
                   />
+                  <select
+                    aria-label="데일리 작업 단계"
+                    title="몇 차 작업에 넣을지 · 기본은 지금 보고 있는 작업 탭"
+                    className={cn(inputClass, "!w-20")}
+                    value={dailyStage || String(activeTab + 1)}
+                    onChange={(e) => setDailyStage(e.target.value)}
+                  >
+                    {storedTabs.map((_, index) => (
+                      <option key={index} value={index + 1}>
+                        {index + 1}차
+                      </option>
+                    ))}
+                  </select>
                   <button
                     type="submit"
                     className={buttonClass}
@@ -1560,18 +1665,24 @@ export function ProductionDashboard() {
                         mergedLabel={record.mergedLabel}
                         stage={stageInfo(record.block)}
                         now={clock}
+                        prerequisites={prerequisitesFor(record.rows, record.block)}
                         onStarted={ensureSessionStarted}
                       />
                     ),
                   })),
                   ...unrecordedDayItems.map((item) => ({
-                      position: recordPosition({ rows: [item.rowId] }),
-                      node: (
-                        <p key={item.rowId} className="py-1 text-xs">
-                          {rowById.get(item.rowId)?.componentName} · 시간 미정
-                        </p>
-                      ),
-                    })),
+                    position: recordPosition({ rows: [item.rowId] }),
+                    node: (
+                      <p key={item.rowId} className="py-1 text-xs">
+                        {rowById.get(item.rowId)?.componentName} · 시간 미정
+                        {prerequisitesFor([item.rowId]).map((p) => (
+                          <span key={p.name} className="ml-1 text-[10px] text-muted-foreground">
+                            ← 선행 · {p.name}
+                          </span>
+                        ))}
+                      </p>
+                    ),
+                  })),
                   ...dayDailies.map((task) => ({
                     position: dailyPosition(task),
                     node: (
@@ -1586,6 +1697,31 @@ export function ProductionDashboard() {
                             label: `${index + 1}. ${row?.componentName ?? ""} ${row?.order.order_number ?? ""}`,
                           };
                         })}
+                        stage={task.work_stage ?? 1}
+                        stageCount={Math.max(storedTabs.length, task.work_stage ?? 1)}
+                        targets={[
+                          ...workGroups.flatMap((groups, tab) =>
+                            groups.map((members) => {
+                              const row = rowById.get(members[0]!);
+                              return {
+                                id: members[0]!,
+                                group: `${tab + 1}차`,
+                                label: `${row?.componentName ?? ""} ${row?.order.order_number ?? ""}`,
+                              };
+                            }),
+                          ),
+                          ...dayDailies
+                            .filter((other) => other.id !== task.id)
+                            .map((other) => ({
+                              id: other.id,
+                              group: "DAILY",
+                              label: other.name,
+                            })),
+                        ]}
+                        onStage={(workStage) => updateDaily.mutate({ task, workStage })}
+                        onPrerequisites={(prerequisiteFor) =>
+                          updateDaily.mutate({ task, prerequisiteFor })
+                        }
                         busy={updateDaily.isPending || deleteDaily.isPending}
                         onPlace={(value) => placeDaily(task.id, value)}
                         onTime={(startMin, endMin) =>
@@ -1689,6 +1825,7 @@ function ProductionBlockRecord({
   mergedLabel,
   stage,
   now,
+  prerequisites,
 }: {
   block: WorkBlock;
   row: DashboardComponentRow;
@@ -1700,6 +1837,8 @@ function ProductionBlockRecord({
   /** 1차/2차로 나눈 작업의 단계 표시와, 앞 단계가 끝난 시각(2차 대기 시간 계산용, #92) */
   stage?: { label: string | undefined; waitFrom: string | undefined } | undefined;
   now?: Date | undefined;
+  /** 이 작업 전에 꼭 끝내야 하는 데일리 작업(선행, #98) */
+  prerequisites?: { name: string; late: boolean }[] | undefined;
 }) {
   const tasks = useQuery(workSessionTasksQuery(row.work_session_id));
   const task = tasks.data?.find((item) => item.id === block.work_session_task_id);
@@ -1745,6 +1884,18 @@ function ProductionBlockRecord({
             {waitText && (
               <span className="mt-0.5 block text-[10px] text-muted-foreground">{waitText}</span>
             )}
+            {prerequisites?.map((prerequisite) => (
+              <span
+                key={prerequisite.name}
+                className={cn(
+                  "mt-0.5 block text-[10px]",
+                  prerequisite.late ? "text-destructive" : "text-muted-foreground",
+                )}
+              >
+                ← 선행 · {prerequisite.name}
+                {prerequisite.late && " · ⚠ 이 작업 시작보다 늦게 끝나요"}
+              </span>
+            ))}
           </span>
           <span className="shrink-0 text-muted-foreground">
             {task?.actual_started_at
@@ -1772,6 +1923,11 @@ function DailyRecordRow({
   task,
   placement,
   workItems,
+  stage,
+  stageCount,
+  targets,
+  onStage,
+  onPrerequisites,
   busy,
   onPlace,
   onTime,
@@ -1780,6 +1936,13 @@ function DailyRecordRow({
   task: DailyTask;
   placement: string;
   workItems: { id: string; label: string }[];
+  /** 작업 단계(1 = 1차), 고를 수 있는 단계 수 (#98) */
+  stage: number;
+  stageCount: number;
+  /** 선행으로 지정할 수 있는 대상 — 그날 작업 탭의 컴포넌트와 다른 데일리 작업 */
+  targets: { id: string; group: string; label: string }[];
+  onStage: (stage: number) => void;
+  onPrerequisites: (ids: string[]) => void;
   busy: boolean;
   onPlace: (value: string) => void;
   onTime: (startMin: number, endMin: number) => void;
@@ -1787,6 +1950,17 @@ function DailyRecordRow({
 }) {
   const start = toMin(task.start_time);
   const duration = Math.max(SNAP_MIN, toMin(task.end_time) - start);
+  const chosen = new Set(task.prerequisite_for ?? []);
+  const chosenTargets = targets.filter((target) => chosen.has(target.id));
+  const groups = [...new Set(targets.map((target) => target.group))];
+  const toggle = (ids: string[], on: boolean) => {
+    const next = new Set(chosen);
+    for (const id of ids) {
+      if (on) next.add(id);
+      else next.delete(id);
+    }
+    onPrerequisites(targets.map((target) => target.id).filter((id) => next.has(id)));
+  };
   return (
     <div
       className="my-1 space-y-1 border border-border bg-background p-1.5 text-xs"
@@ -1833,9 +2007,24 @@ function DailyRecordRow({
           –{toTime(start + duration).slice(0, 5)} · {duration}분
         </span>
         <select
+          aria-label={`${task.name} 단계`}
+          className="border border-border bg-background p-0.5 text-[11px]"
+          value={stage}
+          disabled={busy}
+          onChange={(e) => onStage(Number(e.target.value))}
+        >
+          {Array.from({ length: stageCount }, (_, index) => (
+            <option key={index} value={index + 1}>
+              {index + 1}차
+            </option>
+          ))}
+        </select>
+        <select
           aria-label={`${task.name} 순서`}
           className="min-w-0 flex-1 border border-border bg-background p-0.5 text-[11px]"
-          value={placement}
+          value={chosenTargets.length ? "time" : placement}
+          disabled={chosenTargets.length > 0}
+          title={chosenTargets.length ? "선행 대상 바로 앞에 놓여요" : undefined}
           onChange={(e) => onPlace(e.target.value)}
         >
           <option value="time">시간 순</option>
@@ -1847,6 +2036,57 @@ function DailyRecordRow({
           <option value="end">맨 끝</option>
         </select>
       </div>
+      {chosenTargets.length > 0 && (
+        <p className="text-[11px] text-muted-foreground">
+          → 먼저 끝낼 것: {chosenTargets.map((target) => target.label.trim()).join(", ")}
+        </p>
+      )}
+      {targets.length > 0 && (
+        <details className="border border-border/70 bg-card">
+          <summary className="cursor-pointer px-2 py-1 text-[11px]">
+            선행 작업으로 지정 · {chosenTargets.length}개
+          </summary>
+          <div className="space-y-1.5 px-2 pb-2">
+            <p className="text-[10px] text-muted-foreground">
+              이 작업을 먼저 끝내야 하는 작업을 고르세요.
+            </p>
+            {groups.map((group) => {
+              const ids = targets.filter((t) => t.group === group).map((t) => t.id);
+              const all = ids.every((id) => chosen.has(id));
+              return (
+                <div key={group} className="space-y-0.5">
+                  <div className="flex items-center justify-between">
+                    <span className="label-caps text-[10px] text-muted-foreground">{group}</span>
+                    {group !== "DAILY" && (
+                      <button
+                        type="button"
+                        className="text-[10px] underline"
+                        disabled={busy}
+                        onClick={() => toggle(ids, !all)}
+                      >
+                        {all ? `${group} 전체 해제` : `${group} 전체`}
+                      </button>
+                    )}
+                  </div>
+                  {targets
+                    .filter((target) => target.group === group)
+                    .map((target) => (
+                      <label key={target.id} className="flex items-center gap-1.5 text-[11px]">
+                        <input
+                          type="checkbox"
+                          checked={chosen.has(target.id)}
+                          disabled={busy}
+                          onChange={(e) => toggle([target.id], e.target.checked)}
+                        />
+                        <span className="[overflow-wrap:anywhere]">{target.label}</span>
+                      </label>
+                    ))}
+                </div>
+              );
+            })}
+          </div>
+        </details>
+      )}
     </div>
   );
 }

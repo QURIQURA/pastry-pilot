@@ -89,6 +89,14 @@ alter table public.orders add column if not exists pickup_at timestamptz;
 alter table public.orders add column if not exists event_date date;
 alter table public.orders add column if not exists updated_at timestamptz not null default now();
 alter table public.orders alter column id set default gen_random_uuid();
+create table if not exists public.daily_tasks (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null,
+  task_date date not null,
+  start_time time not null,
+  end_time time not null,
+  name text not null
+);
 create table if not exists public.pilot_settings (
   user_id uuid primary key,
   popup_workflow jsonb not null default '[{"id":"PLANNING","label":"CONFIRMED"},{"id":"PREPARING","label":"MENU PLANNING"},{"id":"COMPLETED","label":"COMPLETED"}]'::jsonb,
